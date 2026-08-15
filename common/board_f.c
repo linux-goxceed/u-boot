@@ -36,7 +36,6 @@
 #include <relocate.h>
 #include <serial.h>
 #include <spl.h>
-#include <status_led.h>
 #include <sysreset.h>
 #include <time.h>
 #include <timer.h>
@@ -465,8 +464,9 @@ static int reserve_uboot(void)
 	if (CONFIG_IS_ENABLED(SKIP_RELOCATE))
 		gd->flags |= GD_FLG_SKIP_RELOC;
 
-	if (!(gd->flags & GD_FLG_SKIP_RELOC) ||
-	    IS_ENABLED(CONFIG_MONITOR_IS_IN_RAM)) {
+	if (!CONFIG_IS_ENABLED(SKIP_RELOCATE_CODE) &&
+	    (!(gd->flags & GD_FLG_SKIP_RELOC) ||
+	     IS_ENABLED(CONFIG_MONITOR_IS_IN_RAM))) {
 		/*
 		 * reserve memory for U-Boot code, data & bss
 		 * round down to next 4 kB limit
@@ -821,7 +821,16 @@ static int initf_dm(void)
 		return 0;
 
 	bootstage_start(BOOTSTAGE_ID_ACCUM_DM_F, "dm_f");
-	ret = dm_init_and_scan(true);
+
+	/*
+	 * If SKIP_EARLY_DM is set then we just create an empty device
+	 * model, the serial port will still be bound later through
+	 * serial_find_console_or_panic() via /chosen/stdout-path
+	 */
+	if (!CONFIG_IS_ENABLED(SKIP_EARLY_DM))
+		ret = dm_init_and_scan(true);
+	else
+		ret = dm_init(false);
 	if (ret)
 		return ret;
 

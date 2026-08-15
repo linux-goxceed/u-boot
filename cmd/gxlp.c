@@ -194,4 +194,4 @@ U_BOOT_CMD(gxlp, 6, 0, do_gxlp,
 	   "gxlp load <addr_hex> <size_hex> [text]  (diagnostic)\n"
 	   "gxlp dump                  (diagnostic: shared XDATA)\n"
 	   "gxlp diag stop|bit1        (diagnostic: STOP probes)\n"
-	   "    Product path auto-starts open LPC if needed.\n";
+	   "    Product path auto-starts open LPC if needed.\n");
