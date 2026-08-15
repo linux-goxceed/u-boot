@@ -74,7 +74,11 @@ extern void __chk_io_ptr(const volatile void __iomem *);
  * At least gcc 5.1 or clang 8 are needed.
  */
 #ifndef COMPILER_HAS_GENERIC_BUILTIN_OVERFLOW
+#if defined(CONFIG_CSKY)
+/* csky-linux-gcc 4.5.1 lacks __builtin_*_overflow; use fallbacks. */
+#else
 #error Unsupported compiler
+#endif
 #endif
 
 /*

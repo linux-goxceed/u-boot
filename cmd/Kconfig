@@ -1750,6 +1750,50 @@ config CMD_SF
 	help
 	  SPI Flash support
 
+config GX6702_PARTITIONS
+	bool "gxpart - parse NationalChip GxLoader partition table"
+	depends on DM_SPI_FLASH
+	help
+	  Adds the "gxpart" command, which reads the NationalChip GxLoader
+	  partition table from SPI flash (default offset 0x10000), prints the
+	  BOOT/TABLE/LOGO/KERNEL/ROOT/DATA layout, and installs a matching
+	  "mtdparts" environment variable for the mtd/sf commands.
+
+config CMD_GXLOADER
+	bool "gxloader - run on-flash GxLoader from SPI"
+	depends on DM_SPI_FLASH
+	help
+	  Adds the "gxloader" command, which reads the 64 KiB BOOT partition
+	  from SPI flash into 0x931693e0 and jumps there. This runs the same
+	  code path as a normal flash boot (including front-panel display init).
+
+config GX6702_LPC
+	bool
+	help
+	  Shared NationalChip GX6702 always-on 8051 (LPC) helpers used by
+	  hd2015 and gxlp: open firmware load, mailbox publish, RTC/alarm
+	  and soft-standby support.
+
+config CMD_HD2015
+	bool "hd2015 - NationalChip front-panel HD2015E/TM1650 7-seg display"
+	depends on TARGET_GX6702
+	select GX6702_LPC
+	help
+	  Adds the "hd2015" command. On GX6702 it drives the front-panel
+	  display through the open standby-8051 firmware (text, scroll,
+	  brightness, AUX indicators, clock-display mode). The 8051 owns
+	  the TM1650 bus; CK610 GPIO bitbang is not used.
+
+config CMD_GXLP
+	bool "gxlp - NationalChip GX6702 LPC RTC / soft standby"
+	depends on TARGET_GX6702
+	select GX6702_LPC
+	default y if CMD_HD2015
+	help
+	  Adds the "gxlp" command for LPC RTC, alarm, soft standby
+	  (STOP+bit1), key/IR probe, and diagnostic external LPC loads.
+	  Product commands auto-start the open LPC image when needed.
+
 config CMD_SF_TEST
 	bool "sf test - Allow testing of SPI flash"
 	depends on CMD_SF

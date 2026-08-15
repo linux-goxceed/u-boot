@@ -1,5 +1,6 @@
 #include <command.h>
 #include <exports.h>
+#include <errno.h>
 #include <malloc.h>
 #include <spi.h>
 #include <i2c.h>
@@ -17,6 +18,8 @@ unsigned long get_version(void)
 int jumptable_init(void)
 {
 	gd->jt = malloc(sizeof(struct jt_funcs));
+	if (!gd->jt)
+		return -ENOMEM;
 #include <_exports.h>
 
 	return 0;

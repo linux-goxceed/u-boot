@@ -123,7 +123,10 @@ typedef __u32 u32;
 #else /* !USE_HOSTCC */
 
 /* Type for `void *' pointers. */
+#ifndef _UBOOT_UINTPTR_T
+#define _UBOOT_UINTPTR_T
 typedef unsigned long int uintptr_t;
+#endif
 
 #include <linux/string.h>
 #include <linux/types.h>

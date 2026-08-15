@@ -27,6 +27,9 @@
 #include <net.h>
 #include <asm/cache.h>
 #include <asm/global_data.h>
+#if defined(CONFIG_CSKY)
+#include <asm/u-boot.h>
+#endif
 #include <u-boot/crc.h>
 #include <binman.h>
 #include <command.h>
@@ -97,6 +100,10 @@ static int initr_trace(void)
 
 static int initr_reloc(void)
 {
+#if defined(CONFIG_CSKY) && CONFIG_IS_ENABLED(SKIP_RELOCATE)
+	/* set in board_init_r() before initcall_run_r() */
+	return 0;
+#endif
 	/* tell others: relocation done */
 	gd->flags |= GD_FLG_RELOC | GD_FLG_FULL_MALLOC_INIT;
 
@@ -127,6 +134,8 @@ static int initr_reloc_global_data(void)
 	monitor_flash_len = _end - __image_copy_start;
 #elif defined(CONFIG_RISCV)
 	monitor_flash_len = (ulong)_end - (ulong)_start;
+#elif defined(CONFIG_CSKY)
+	monitor_flash_len = (ulong)__bss_end - (ulong)_start;
 #elif !defined(CONFIG_SANDBOX) && !defined(CONFIG_NIOS2)
 	monitor_flash_len = (ulong)__init_end - gd->relocaddr;
 #endif
@@ -558,6 +567,9 @@ static int dm_announce(void)
 	int uclass_count;
 
 	if (IS_ENABLED(CONFIG_DM)) {
+		if (!gd->dm_root)
+			return 0;
+
 		dm_get_stats(&device_count, &uclass_count);
 		printf("Core:  %d devices, %d uclasses", device_count,
 		       uclass_count);
@@ -785,6 +797,10 @@ static void initcall_run_r(void)
 
 void board_init_r(gd_t *new_gd, ulong dest_addr)
 {
+#if defined(CONFIG_CSKY)
+	csky_board_init_r(new_gd);
+#endif
+
 	/*
 	 * The pre-relocation drivers may be using memory that has now gone
 	 * away. Mark serial as unavailable - this will fall back to the debug
@@ -805,8 +821,9 @@ void board_init_r(gd_t *new_gd, ulong dest_addr)
 
 #if defined(CONFIG_RISCV)
 	set_gd(new_gd);
-#elif !defined(CONFIG_X86) && !defined(CONFIG_ARM) && !defined(CONFIG_ARM64)
-	gd = new_gd;
+#elif !defined(CONFIG_CSKY) && !defined(CONFIG_X86) && !defined(CONFIG_ARM) && \
+		!defined(CONFIG_ARM64)
+		gd = new_gd;
 #endif
 	gd->flags &= ~GD_FLG_LOG_READY;
 

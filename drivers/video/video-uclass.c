@@ -14,6 +14,7 @@
 #include <malloc.h>
 #include <mapmem.h>
 #include <spl.h>
+#include <splash.h>
 #include <stdio_dev.h>
 #include <video.h>
 #include <video_console.h>
@@ -597,7 +598,17 @@ static int show_splash(struct udevice *dev)
 	u8 *data = SPLASH_START(u_boot_logo);
 	int ret;
 
-	ret = video_bmp_display(dev, map_to_sysmem(data), -4, 4, true);
+	/*
+	 * Default U-Boot places the 160x96 logo at x=-4 (top-right).  On a
+	 * 1920x1080 panel that looks like the logo was "thrown into a corner"
+	 * next to stock GxLoader's full-screen splash — center it on GX6702.
+	 */
+	if (IS_ENABLED(CONFIG_VIDEO_GX6702))
+		ret = video_bmp_display(dev, map_to_sysmem(data),
+					BMP_ALIGN_CENTER, BMP_ALIGN_CENTER,
+					true);
+	else
+		ret = video_bmp_display(dev, map_to_sysmem(data), -4, 4, true);
 
 	return 0;
 }

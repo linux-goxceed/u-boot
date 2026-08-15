@@ -10,6 +10,7 @@
 #include <dm/ofnode.h>
 #include <generic-phy.h>
 #include <reset.h>
+#include <usb.h>
 #include <asm/io.h>
 #include <dm.h>
 #include "ehci.h"
@@ -35,8 +36,11 @@ static int ehci_enable_vbus_supply(struct udevice *dev)
 
 	ret = device_get_supply_regulator(dev, "vbus-supply",
 					  &priv->vbus_supply);
-	if (ret && ret != -ENOENT)
+	/* No regulator framework / no vbus-supply property */
+	if (ret && ret != -ENOENT && ret != -ENOSYS)
 		return ret;
+	if (ret)
+		return 0;
 
 	ret = regulator_set_enable_if_allowed(priv->vbus_supply, true);
 	if (ret && ret != -ENOSYS) {
@@ -66,28 +70,43 @@ static int ehci_usb_probe(struct udevice *dev)
 	int err, ret;
 
 	err = 0;
+	/* Some boards must defer shared pad/PHY setup until `usb start`. */
+	if (dev_read_bool(dev, "u-boot,board-init")) {
+		err = board_usb_init(dev_seq(dev), USB_INIT_HOST);
+		if (err) {
+			dev_err(dev, "board USB init failed (err=%d)\n", err);
+			return err;
+		}
+	}
+
 	ret = clk_get_bulk(dev, &priv->clocks);
-	if (ret && ret != -ENOENT) {
+	/* -ENOSYS: no CLK uclass (e.g. GX6702); -ENOENT: no clocks in DT */
+	if (ret && ret != -ENOENT && ret != -ENOSYS) {
 		dev_err(dev, "Failed to get clocks (ret=%d)\n", ret);
 		return ret;
 	}
 
-	err = clk_enable_bulk(&priv->clocks);
-	if (err) {
-		dev_err(dev, "Failed to enable clocks (err=%d)\n", err);
-		goto clk_err;
+	if (!ret) {
+		err = clk_enable_bulk(&priv->clocks);
+		if (err) {
+			dev_err(dev, "Failed to enable clocks (err=%d)\n", err);
+			goto clk_err;
+		}
 	}
 
 	err = reset_get_bulk(dev, &priv->resets);
-	if (err && err != -ENOENT) {
+	if (err && err != -ENOENT && err != -ENOSYS && err != -ENOTSUPP) {
 		dev_err(dev, "Failed to get resets (err=%d)\n", err);
 		goto clk_err;
 	}
 
-	err = reset_deassert_bulk(&priv->resets);
-	if (err) {
-		dev_err(dev, "Failed to get deassert resets (err=%d)\n", err);
-		goto reset_err;
+	if (!err) {
+		err = reset_deassert_bulk(&priv->resets);
+		if (err) {
+			dev_err(dev, "Failed to get deassert resets (err=%d)\n",
+				err);
+			goto reset_err;
+		}
 	}
 
 	err = ehci_enable_vbus_supply(dev);
@@ -120,11 +139,11 @@ regulator_err:
 
 reset_err:
 	ret = reset_release_bulk(&priv->resets);
-	if (ret)
+	if (ret && ret != -ENOSYS && ret != -ENOTSUPP)
 		dev_err(dev, "failed to release resets (ret=%d)\n", ret);
 clk_err:
 	ret = clk_release_bulk(&priv->clocks);
-	if (ret)
+	if (ret && ret != -ENOSYS && ret != -ENOTSUPP)
 		dev_err(dev, "failed to release clocks (ret=%d)\n", ret);
 
 	return err;
@@ -148,10 +167,14 @@ static int ehci_usb_remove(struct udevice *dev)
 		return ret;
 
 	ret = reset_release_bulk(&priv->resets);
-	if (ret)
+	if (ret && ret != -ENOSYS && ret != -ENOTSUPP)
 		return ret;
 
-	return clk_release_bulk(&priv->clocks);
+	ret = clk_release_bulk(&priv->clocks);
+	if (ret && ret != -ENOSYS && ret != -ENOTSUPP)
+		return ret;
+
+	return 0;
 }
 
 static const struct udevice_id ehci_usb_ids[] = {

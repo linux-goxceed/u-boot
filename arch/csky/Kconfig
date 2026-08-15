@@ -1,0 +1,28 @@
+menu "C-SKY architecture"
+	depends on CSKY
+
+config SYS_ARCH
+	default "csky"
+
+config CPU_CK610
+	bool
+	default y
+
+choice
+	prompt "Target select"
+	optional
+
+config TARGET_GX6702
+	bool "NationalChip GX6702 (Gemini 6702H5)"
+	select CPU_CK610
+	select BOARD_LATE_INIT
+	select SYS_NS16550
+	select GX6702_SPI
+	select SUPPORT_OF_CONTROL
+	select OF_CONTROL
+
+endchoice
+
+source "board/nationalchip/gx6702/Kconfig"
+
+endmenu

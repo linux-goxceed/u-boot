@@ -1,0 +1,28 @@
+if TARGET_GX6702
+
+config SYS_BOARD
+	default "gx6702"
+
+config SYS_VENDOR
+	default "nationalchip"
+
+config SYS_CONFIG_NAME
+	default "gx6702"
+
+config VIDEO_GX6702
+	bool "GX6702 display output (HDMI and CVBS/YPbPr)"
+	depends on VIDEO
+	select VIDEO_DW_HDMI
+	select I2C_EDID
+	help
+	  Drive the GX6702 display path. The primary DVE at 0xA4804000 feeds
+	  HDMI and YPbPr. The secondary VPU/DVE at 0xA4900000/0xA4904000
+	  downscales 50 Hz modes to PAL 720x576i CVBS and 60 Hz modes to NTSC
+	  720x480i CVBS. The HDMI output mode is picked with
+	  nationalchip,video-mode.
+
+	  The console framebuffer is RGB and is converted to the UYVY 4:2:2
+	  the graphics layer fetches. Those buffers and the vendor-sized
+	  812 KiB SVPU working area are reserved from the top of DRAM.
+
+endif

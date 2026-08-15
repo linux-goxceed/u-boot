@@ -125,6 +125,17 @@ obj-$(CONFIG_CMD_OPTEE_RPMB) += optee_rpmb.o
 obj-$(CONFIG_CMD_OPTEE) += optee.o
 obj-$(CONFIG_CMD_MP) += mp.o
 obj-$(CONFIG_CMD_MTD) += mtd.o
+obj-$(CONFIG_GX6702_PARTITIONS) += gxpart.o
+obj-$(CONFIG_CMD_GXLOADER) += gxloader.o
+obj-$(CONFIG_GX6702_LPC) += gx_lpc.o gxopen_fw.o gx6702_ck610_lpc.o
+$(obj)/gxopen_fw.o: $(srctree)/lib/nationalchip-lpc/gx6702-lpc.bin
+
+# Build open LPC firmware automatically from the integrated lib/nationalchip-lpc tree.
+$(srctree)/lib/nationalchip-lpc/gx6702-lpc.bin:
+	$(Q)$(MAKE) -C $(srctree)/lib/nationalchip-lpc
+
+obj-$(CONFIG_CMD_HD2015) += hd2015.o
+obj-$(CONFIG_CMD_GXLP) += gxlp.o
 obj-$(CONFIG_CMD_MTDPARTS) += mtdparts.o
 obj-$(CONFIG_CMD_CLONE) += clone.o
 ifneq ($(CONFIG_CMD_NAND)$(CONFIG_CMD_SF),)

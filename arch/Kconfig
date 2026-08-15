@@ -185,6 +185,13 @@ config RISCV
 	imply SPL_SERIAL
 	imply SPL_TIMER
 
+config CSKY
+	bool "C-SKY architecture"
+	select 32BIT
+	select HAVE_PRIVATE_LIBGCC
+	select SUPPORT_LITTLE_ENDIAN
+	select SYS_CACHE_SHIFT_4
+
 config SANDBOX
 	bool "Sandbox"
 	select HAVE_SETJMP
@@ -564,6 +571,7 @@ source "arch/sh/Kconfig"
 source "arch/x86/Kconfig"
 source "arch/xtensa/Kconfig"
 source "arch/riscv/Kconfig"
+source "arch/csky/Kconfig"
 
 if ARM || M68K || PPC
 

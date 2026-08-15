@@ -196,6 +196,9 @@ static int console_setfile(int file, struct stdio_dev * dev)
 		 * Update monitor functions
 		 * (to use the console stuff by other applications)
 		 */
+		if (!gd->jt)
+			break;
+
 		switch (file) {
 		case stdin:
 			gd->jt->getc = getchar;
@@ -1169,8 +1172,10 @@ done:
 
 	if (IS_ENABLED(CONFIG_SYS_CONSOLE_ENV_OVERWRITE)) {
 		/* set the environment variables (will overwrite previous env settings) */
-		for (i = 0; i < MAX_FILES; i++)
-			env_set(stdio_names[i], stdio_devices[i]->name);
+		for (i = 0; i < MAX_FILES; i++) {
+			if (stdio_devices[i])
+				env_set(stdio_names[i], stdio_devices[i]->name);
+		}
 	}
 
 	gd->flags |= GD_FLG_DEVINIT;	/* device initialization completed */
@@ -1237,7 +1242,8 @@ int console_init_r(void)
 
 	/* Setting environment variables */
 	for (i = 0; i < MAX_FILES; i++) {
-		env_set(stdio_names[i], stdio_devices[i]->name);
+		if (stdio_devices[i])
+			env_set(stdio_names[i], stdio_devices[i]->name);
 	}
 
 	gd->flags |= GD_FLG_DEVINIT;	/* device initialization completed */

@@ -450,7 +450,11 @@ struct global_data {
 #endif
 };
 #ifndef DO_DEPS_ONLY
+#if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 201112L
+/* csky-linux-gcc 4.5.1 has no _Static_assert */
+#else
 static_assert(sizeof(struct global_data) == GD_SIZE);
+#endif
 #endif
 
 /**
