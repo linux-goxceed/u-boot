@@ -578,6 +578,19 @@ static void lmb_reserve_uboot_region(void)
 
 static void lmb_reserve_common(void *fdt_blob)
 {
+#if defined(CONFIG_CSKY)
+	/*
+	 * UART-loaded U-Boot (SKIP_RELOC): the generic stack→ram_top reserve
+	 * confuses LMB on this 32-bit layout; only reserve the running image.
+	 */
+	if (gd->flags & GD_FLG_SKIP_RELOC) {
+		lmb_reserve((phys_addr_t)(uintptr_t)_start, gd->mon_len,
+			    LMB_NOOVERWRITE);
+		if (CONFIG_IS_ENABLED(OF_LIBFDT) && fdt_blob)
+			boot_fdt_add_mem_rsv_regions(fdt_blob);
+		return;
+	}
+#endif
 	lmb_reserve_uboot_region();
 
 	if (CONFIG_IS_ENABLED(OF_LIBFDT) && fdt_blob)

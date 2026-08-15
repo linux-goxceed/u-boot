@@ -10,8 +10,12 @@
 		     + __GNUC_MINOR__ * 100	\
 		     + __GNUC_PATCHLEVEL__)
 
-#if GCC_VERSION < 40600
+#if GCC_VERSION < 40600 && !defined(CONFIG_CSKY)
 # error Sorry, your compiler is too old - please upgrade it.
+#endif
+
+#if !defined(__STDC_VERSION__) || __STDC_VERSION__ < 201112L
+#define _Static_assert(expr, msg)
 #endif
 
 /* Optimization barrier */
@@ -147,6 +151,22 @@
 
 #if GCC_VERSION >= 50100
 #define COMPILER_HAS_GENERIC_BUILTIN_OVERFLOW 1
+#endif
+
+#if defined(CONFIG_CSKY) && !defined(COMPILER_HAS_GENERIC_BUILTIN_OVERFLOW)
+#define __builtin_add_overflow(a, b, res) ({ \
+	typeof(a) __a = (a); typeof(b) __b = (b); typeof(*res) __r = __a + __b; \
+	*(res) = __r; (int)(__r < __a); \
+})
+#define __builtin_sub_overflow(a, b, res) ({ \
+	typeof(a) __a = (a); typeof(b) __b = (b); typeof(*res) __r = __a - __b; \
+	*(res) = __r; (int)(__r > __a); \
+})
+#define __builtin_mul_overflow(a, b, res) ({ \
+	typeof(a) __a = (a); typeof(b) __b = (b); typeof(*res) __r; int __ovf = 0; \
+	if (__b && __a > (typeof(*res))-1 / __b) __ovf = 1; \
+	__r = __a * __b; *(res) = __r; __ovf; \
+})
 #endif
 
 /*

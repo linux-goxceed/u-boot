@@ -276,6 +276,8 @@ static int setup_mon_len(void)
 	gd->mon_len = (ulong)_end - (ulong)_init;
 #elif defined(CONFIG_NIOS2) || defined(CONFIG_XTENSA)
 	gd->mon_len = CONFIG_SYS_MONITOR_LEN;
+#elif defined(CONFIG_CSKY)
+	gd->mon_len = (ulong)__bss_end - (ulong)_start;
 #elif defined(CONFIG_SH) || defined(CONFIG_RISCV)
 	gd->mon_len = (ulong)(__bss_end) - (ulong)(_start);
 #elif defined(CONFIG_SYS_MONITOR_BASE)
@@ -463,10 +465,15 @@ static int reserve_uboot(void)
 	if (CONFIG_IS_ENABLED(SKIP_RELOCATE))
 		gd->flags |= GD_FLG_SKIP_RELOC;
 
-	if (!(gd->flags & GD_FLG_SKIP_RELOC)) {
+	if (!(gd->flags & GD_FLG_SKIP_RELOC) ||
+	    IS_ENABLED(CONFIG_MONITOR_IS_IN_RAM)) {
 		/*
 		 * reserve memory for U-Boot code, data & bss
 		 * round down to next 4 kB limit
+		 *
+		 * With MONITOR_IS_IN_RAM + SKIP_RELOC the image is not copied to
+		 * relocaddr, but we still lower relocaddr so initr_malloc()'s
+		 * heap (relocaddr - TOTAL_MALLOC_LEN) does not overlap the stack.
 		 */
 		gd->relocaddr -= gd->mon_len;
 		gd->relocaddr &= ~(4096 - 1);
@@ -654,7 +661,7 @@ static int init_post(void)
 static int reloc_fdt(void)
 {
 	if (!IS_ENABLED(CONFIG_OF_EMBED)) {
-		if (gd->boardf->new_fdt) {
+		if (gd->boardf->new_fdt && gd->fdt_blob) {
 			memcpy(gd->boardf->new_fdt, gd->fdt_blob,
 			       fdt_totalsize(gd->fdt_blob));
 			gd->fdt_blob = gd->boardf->new_fdt;
@@ -1022,7 +1029,7 @@ static void initcall_run_f(void)
 
 void board_init_f(ulong boot_flags)
 {
-	struct board_f boardf;
+	struct board_f boardf = {};
 
 	gd->flags = boot_flags;
 	gd->flags &= ~GD_FLG_HAVE_CONSOLE;
@@ -1032,7 +1039,7 @@ void board_init_f(ulong boot_flags)
 
 #if !defined(CONFIG_ARM) && !defined(CONFIG_SANDBOX) && \
 		!defined(CONFIG_EFI_APP) && !CONFIG_IS_ENABLED(X86_64) && \
-		!defined(CONFIG_ARC)
+		!defined(CONFIG_ARC) && !defined(CONFIG_CSKY)
 	/* NOTREACHED - jump_to_copy() does not return */
 	hang();
 #endif

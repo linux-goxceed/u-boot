@@ -527,6 +527,15 @@ config SIFIVE_GPIO
 	  Device model driver for GPIO controller present in SiFive FU540 SoC. This
 	  driver enables GPIO interface on HiFive Unleashed A00 board.
 
+config GX6702_GPIO
+	bool "NationalChip GX6702 GPIO driver"
+	depends on DM_GPIO
+	help
+	  Device-model driver for the GX6702 write-one direction and output
+	  command registers at 0xA0305000.  This layout is not compatible with
+	  the GX6605S "wd,mbl-gpio" block.  Required by the HD2015 front-panel
+	  display command.
+
 config MVEBU_GPIO
 	bool "Marvell MVEBU GPIO driver"
 	depends on DM_GPIO && (ARCH_MVEBU || ARCH_KIRKWOOD)

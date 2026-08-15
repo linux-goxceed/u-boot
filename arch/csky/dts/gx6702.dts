@@ -1,0 +1,170 @@
+// SPDX-License-Identifier: GPL-2.0+
+/*
+ * NationalChip GX6702 (Gemini 6702H5), C-SKY CK610.
+ *
+ * Peripheral bases use the uncached alias (+0xA0000000) that the vendor
+ * stage-1 MMU maps, matching the UART/SPI register windows used by U-Boot.
+ */
+
+/dts-v1/;
+
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	model = "NationalChip GX6702 (Gemini 6702H5)";
+	compatible = "nationalchip,gx6702";
+
+	aliases {
+		serial0 = &uart0;
+		spi0 = &spi0;
+		gpio0 = &gpio0;
+		watchdog0 = &watchdog0;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	clocks {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		uart_clk: uart-clk {
+			compatible = "fixed-clock";
+			#clock-cells = <0>;
+			clock-frequency = <24000000>;
+		};
+	};
+
+	soc {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+		bootph-all;
+
+		uart0: serial@a0402000 {
+			compatible = "ns16550a";
+			reg = <0xa0402000 0x1000>;
+			reg-shift = <2>;
+			reg-io-width = <4>;
+			clock-frequency = <24000000>;
+			bootph-all;
+		};
+
+		/*
+		 * Free-running SoC timer (gx6605s-compatible). Base confirmed
+		 * via vendor gemini/BOOT-128k immediates at 0xA020A044 (VALUE
+		 * of the clock-source half at +0x40). Required for udelay()
+		 * used by EHCI handshakes; the old software timestamp never
+		 * advanced and hung usb start forever.
+		 */
+		timer0: timer@a020a000 {
+			compatible = "nationalchip,gx6702-timer",
+				     "csky,gx6605s-timer";
+			reg = <0xa020a000 0x60>;
+			clock-frequency = <27000000>;
+			status = "okay";
+		};
+
+		/*
+		 * Full-SoC watchdog/reset block.  The recovered GxLoader sequence
+		 * derives a 1 kHz counter from the 27 MHz input clock.
+		 */
+		watchdog0: watchdog@a020b000 {
+			compatible = "nationalchip,gx6702-wdt";
+			reg = <0xa020b000 0x10>;
+			clock-frequency = <27000000>;
+			status = "okay";
+		};
+
+		/*
+		 * GX6702 GPIO bank 0.  This is not register-compatible with the
+		 * GX6605S "wd,mbl-gpio" block: direction state/commands are at
+		 * +0/+4/+8 and GPIO data state/commands at +0x10/+0x14/+0x18.
+		 */
+		gpio0: gpio@a0305000 {
+			compatible = "nationalchip,gx6702-gpio";
+			reg = <0xa0305000 0x1c>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			ngpios = <32>;
+			bootph-all;
+		};
+
+		/*
+		 * HD2015E front-panel: vendor display macro-cell at 0xA4800000
+		 * plus GPIO 14/13 for the TM1650-compatible serial interface.
+		 */
+
+		spi0: spi@a0302000 {
+			compatible = "nationalchip,gx6702-spi";
+			reg = <0xa0302000 0x20>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "okay";
+
+			flash@0 {
+				compatible = "jedec,spi-nor";
+				reg = <0>;
+				spi-max-frequency = <24000000>;
+			};
+		};
+
+		/*
+		 * USB host: EHCI at 0xA0904000 (vendor ehci_hcd_init lrw),
+		 * not 0xA0900000 (subsystem window / other regs). Pad/PHY
+		 * enable is board code (gx6702_usb_enable). OHCI companions
+		 * at 0xA0A00000 / 0xA0B00000 exist but are unused by vendor
+		 * recovery (EHCI-only).
+		 */
+		usb0: usb@a0904000 {
+			compatible = "generic-ehci";
+			reg = <0xa0904000 0x400>;
+			u-boot,board-init;
+			status = "okay";
+		};
+
+		/*
+		 * Display output. One node covers the whole path because the
+		 * primary graphics/DVE at 0xA4800000/0xA4804000 feeds HDMI and
+		 * YPbPr. The SVPU/secondary DVE at 0xA4900000/0xA4904000 makes
+		 * an independent PAL 576i50 or NTSC 480i60 CVBS clone.
+		 *
+		 * nationalchip,video-mode uses the eCos UI numbering:
+		 *   0 Auto (native/preferred CEA VIC from EDID)
+		 *   1 480i60   2 480p60   3 576i50   4 576p50
+		 *   5 720p50   6 720p60   7 1080i50  8 1080i60
+		 *   9 1080p50 10 1080p60
+		 *
+		 * Register programming comes from gxtest/goldens/dumps/ and the
+		 * 64 KiB GxLoader. Auto prefers an EDID-supported 50 Hz mode so
+		 * PAL CVBS remains the no-EDID default; an EDID-selected/manual 60 Hz
+		 * mode uses NTSC CVBS. Add nationalchip,ypbpr-only to skip the CVBS
+		 * clone and leave its DAC powered down.
+		 */
+		video0: video@a4800000 {
+			compatible = "nationalchip,gx6702-video";
+			reg = <0xa4800000 0x8000>,
+			      <0xa4900000 0x8000>,
+			      <0xa4f00000 0x40000>;
+			reg-names = "gfx", "vp", "hdmi";
+			/* 0=Auto: follow sink EDID; hotplug reselects. */
+			nationalchip,video-mode = <0>;
+			bootph-all;
+			status = "okay";
+		};
+
+		usb1: usb@a0a00000 {
+			compatible = "generic-ohci";
+			reg = <0xa0a00000 0x400>;
+			status = "disabled";
+		};
+
+		usb2: usb@a0b00000 {
+			compatible = "generic-ohci";
+			reg = <0xa0b00000 0x400>;
+			status = "disabled";
+		};
+	};
+};

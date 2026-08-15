@@ -147,7 +147,7 @@ void board_init_f_init_reserve(ulong base)
 	/* zero the area */
 	memset(gd_ptr, '\0', sizeof(*gd));
 	/* set GD unless architecture did it already */
-#if !defined(CONFIG_ARM)
+#if !defined(CONFIG_ARM) && !defined(CONFIG_CSKY)
 	arch_setup_gd(gd_ptr);
 #endif
 
@@ -164,7 +164,11 @@ void board_init_f_init_reserve(ulong base)
 
 #if CONFIG_IS_ENABLED(SYS_MALLOC_F)
 	/* go down one 'early malloc arena' */
+#if defined(CONFIG_CSKY)
+	gd_ptr->malloc_base = base;
+#else
 	gd->malloc_base = base;
+#endif
 #if CONFIG_IS_ENABLED(ZERO_MEM_BEFORE_USE)
 	memset((void *)base, '\0', CONFIG_VAL(SYS_MALLOC_F_LEN));
 #endif

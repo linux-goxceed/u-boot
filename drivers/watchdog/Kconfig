@@ -486,4 +486,12 @@ config WDT_FTWDT010
 	help
 	  Faraday Technology ftwdt010 watchdog is an architecture independent
 	  watchdog. It is usually used in SoC chip design.
+
+config WDT_GX6702
+	bool "NationalChip GX6702 watchdog timer support"
+	depends on WDT && TARGET_GX6702
+	help
+	  Enable the hardware watchdog in NationalChip GX6702 SoCs. The timer
+	  uses a 27 MHz source, supports timeouts up to 65,535 milliseconds and
+	  resets the complete SoC when it expires.
 endmenu

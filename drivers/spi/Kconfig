@@ -663,6 +663,15 @@ config SPI_STACKED_PARALLEL
 
 endif # if DM_SPI
 
+config GX6702_SPI
+	bool "NationalChip GX6702 SPI controller"
+	depends on DM_SPI
+	select SPI_MEM
+	help
+	  Enable the NationalChip Gemini "gxflash" SPI flash controller found
+	  on GX6702/GX6605 boards. Driver-model driver using spi-mem for NOR
+	  flash access; the controller is single-lane (no dual/quad).
+
 config FSL_ESPI
 	bool "Freescale eSPI driver"
 	depends on MPC85xx

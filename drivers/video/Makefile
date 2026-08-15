@@ -27,6 +27,34 @@ obj-$(CONFIG_$(PHASE_)SIMPLE_PANEL) += simple_panel.o
 obj-$(CONFIG_VIDEO_LOGO) += u_boot_logo.o
 obj-$(CONFIG_$(PHASE_)BMP) += bmp.o
 
+#
+# VIDEO_LOGO splash is wrapped by u_boot_logo.S.  Prefer the same vendor BMP
+# that tools/Makefile selects for bmp_logo_data.h (tools/logos/<VENDOR>.bmp),
+# falling back to the stock drivers/video/u_boot_logo.bmp.
+#
+ifeq ($(CONFIG_VIDEO_LOGO),y)
+logo-bmp := $(srctree)/tools/logos/$(VENDOR).bmp
+ifeq ($(wildcard $(logo-bmp)),)
+logo-bmp := $(src)/u_boot_logo.bmp
+endif
+
+quiet_cmd_S_uboot_logo = SPLASH  $@
+cmd_S_uboot_logo =							\
+(									\
+	echo '.section .rodata.splash.init,"a"';				\
+	echo '.balign 16';						\
+	echo '.global __splash_u_boot_logo_begin';			\
+	echo '__splash_u_boot_logo_begin:';				\
+	echo '.incbin "$<" ';						\
+	echo '__splash_u_boot_logo_end:';				\
+	echo '.global __splash_u_boot_logo_end';				\
+	echo '.balign 16';						\
+) > $@
+
+$(obj)/u_boot_logo.S: $(logo-bmp)
+	$(call cmd,S_uboot_logo)
+endif
+
 endif
 
 obj-$(CONFIG_BACKLIGHT_AAT2870) += aat2870_backlight.o

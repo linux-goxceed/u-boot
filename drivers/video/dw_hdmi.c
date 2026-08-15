@@ -141,7 +141,7 @@ static void hdmi_set_clock_regenerator(struct dw_hdmi *hdmi, u32 n, u32 cts)
 	n3 |= (n >> 16) & HDMI_AUD_N3_AUDN19_16_MASK;
 	hdmi_write(hdmi, n3, HDMI_AUD_N3);
 	hdmi_write(hdmi, (n >> 8) & 0xff, HDMI_AUD_N2);
-	hdmi_write(hdmi, n & 0xff, HDMI_AUD_N3);
+	hdmi_write(hdmi, n & 0xff, HDMI_AUD_N1);
 
 	hdmi_write(hdmi, HDMI_AUD_INPUTCLKFS_128, HDMI_AUD_INPUTCLKFS);
 }
@@ -487,9 +487,17 @@ static void hdmi_av_composer(struct dw_hdmi *hdmi,
 		   HDMI_FC_INVIDCONF_DVI_MODEZ_HDMI_MODE :
 		   HDMI_FC_INVIDCONF_DVI_MODEZ_DVI_MODE);
 
-	inv_val |= HDMI_FC_INVIDCONF_R_V_BLANK_IN_OSC_ACTIVE_LOW;
-
-	inv_val |= HDMI_FC_INVIDCONF_IN_I_P_PROGRESSIVE;
+	/*
+	 * Match the Linux dw-hdmi composer: interlaced modes need both the
+	 * I/P bit and R_V_BLANK_IN_OSC, or sinks report an unsupported mode.
+	 */
+	if (edid->flags & DISPLAY_FLAGS_INTERLACED) {
+		inv_val |= HDMI_FC_INVIDCONF_R_V_BLANK_IN_OSC_ACTIVE_HIGH;
+		inv_val |= HDMI_FC_INVIDCONF_IN_I_P_INTERLACED;
+	} else {
+		inv_val |= HDMI_FC_INVIDCONF_R_V_BLANK_IN_OSC_ACTIVE_LOW;
+		inv_val |= HDMI_FC_INVIDCONF_IN_I_P_PROGRESSIVE;
+	}
 
 	hdmi_write(hdmi, inv_val, HDMI_FC_INVIDCONF);
 

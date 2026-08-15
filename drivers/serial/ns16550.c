@@ -208,6 +208,15 @@ int ns16550_calc_divisor(struct ns16550 *port, int clock, int baudrate)
 
 void ns16550_setbrg(struct ns16550 *com_port, int baud_divisor)
 {
+#ifdef CFG_SYS_NS16550_SKIP_INIT
+	/*
+	 * SKIP_INIT means the UART is already configured (e.g. by a vendor
+	 * pre-loader) and must not be reprogrammed. The DM serial uclass calls
+	 * setbrg during init, so guard it here too - otherwise the divisor is
+	 * rewritten from an assumed input clock and the baud rate is corrupted.
+	 */
+	return;
+#endif
 	/* to keep serial format, read lcr before writing BKSE */
 	int lcr_val = serial_in(&com_port->lcr) & ~UART_LCR_BKSE;
 
@@ -219,6 +228,9 @@ void ns16550_setbrg(struct ns16550 *com_port, int baud_divisor)
 
 void ns16550_init(struct ns16550 *com_port, int baud_divisor)
 {
+#ifdef CFG_SYS_NS16550_SKIP_INIT
+	return;
+#endif
 #if defined(CONFIG_XPL_BUILD) && defined(CONFIG_OMAP34XX)
 	/*
 	 * On some OMAP3/OMAP4 devices when UART3 is configured for boot mode
@@ -267,6 +279,9 @@ void ns16550_init(struct ns16550 *com_port, int baud_divisor)
 #if !CONFIG_IS_ENABLED(NS16550_MIN_FUNCTIONS)
 void ns16550_reinit(struct ns16550 *com_port, int baud_divisor)
 {
+#ifdef CFG_SYS_NS16550_SKIP_INIT
+	return;
+#endif
 	serial_out(CFG_SYS_NS16550_IER, &com_port->ier);
 	ns16550_setbrg(com_port, 0);
 	serial_out(UART_MCRVAL, &com_port->mcr);

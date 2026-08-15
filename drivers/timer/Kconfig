@@ -348,4 +348,14 @@ config GOLDFISH_TIMER
 	  It uses the Goldfish RTC hardware to provide a nanosecond-resolution
 	  timer, commonly found in QEMU virt machines.
 
+config GX6605S_TIMER
+	bool "NationalChip Gemini (GX6605s/GX6702) timer support"
+	depends on TIMER
+	help
+	  Select this to enable the free-running count-up timer found on
+	  NationalChip Gemini SoCs (GX6605s, GX6702). Provides the DM timer
+	  used by get_timer()/udelay(). Requires a device-tree node with the
+	  timer block base address; confirm the base on the target before
+	  enabling (see drivers/timer/gx6605s_timer.c).
+
 endmenu
