@@ -19,6 +19,9 @@
 		spi0 = &spi0;
 		gpio0 = &gpio0;
 		watchdog0 = &watchdog0;
+		usb0 = &usb_ehci;
+		usb1 = &usb_ohci0;
+		usb2 = &usb_ohci1;
 	};
 
 	chosen {
@@ -112,15 +115,28 @@
 		};
 
 		/*
-		 * USB host: EHCI at 0xA0904000 (vendor ehci_hcd_init lrw),
-		 * not 0xA0900000 (subsystem window / other regs). Pad/PHY
-		 * enable is board code (gx6702_usb_enable). OHCI companions
-		 * at 0xA0A00000 / 0xA0B00000 exist but are unused by vendor
-		 * recovery (EHCI-only).
+		 * USB host topology recovered from the stock GX6702 path. EHCI
+		 * owns high-speed traffic at 0xA0904000; the two one-port OHCI
+		 * companions at 0xA0900000 and 0xA0901000 own full/low-speed
+		 * traffic. All three share the board-level pad/PHY sequence.
 		 */
-		usb0: usb@a0904000 {
+		usb_ehci: usb@a0904000 {
 			compatible = "generic-ehci";
 			reg = <0xa0904000 0x400>;
+			u-boot,board-init;
+			status = "okay";
+		};
+
+		usb_ohci0: usb@a0900000 {
+			compatible = "generic-ohci";
+			reg = <0xa0900000 0x400>;
+			u-boot,board-init;
+			status = "okay";
+		};
+
+		usb_ohci1: usb@a0901000 {
+			compatible = "generic-ohci";
+			reg = <0xa0901000 0x400>;
 			u-boot,board-init;
 			status = "okay";
 		};
@@ -155,16 +171,5 @@
 			status = "okay";
 		};
 
-		usb1: usb@a0a00000 {
-			compatible = "generic-ohci";
-			reg = <0xa0a00000 0x400>;
-			status = "disabled";
-		};
-
-		usb2: usb@a0b00000 {
-			compatible = "generic-ohci";
-			reg = <0xa0b00000 0x400>;
-			status = "disabled";
-		};
 	};
 };

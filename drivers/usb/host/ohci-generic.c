@@ -11,6 +11,7 @@
 #include <dm/ofnode.h>
 #include <generic-phy.h>
 #include <reset.h>
+#include <usb.h>
 #include "ohci.h"
 
 struct generic_ohci {
@@ -26,28 +27,40 @@ static int ohci_usb_probe(struct udevice *dev)
 	struct generic_ohci *priv = dev_get_priv(dev);
 	int err, ret;
 
+	if (dev_read_bool(dev, "u-boot,board-init")) {
+		err = board_usb_init(dev_seq(dev), USB_INIT_HOST);
+		if (err) {
+			dev_err(dev, "board USB init failed (err=%d)\n", err);
+			return err;
+		}
+	}
+
 	ret = clk_get_bulk(dev, &priv->clocks);
-	if (ret && ret != -ENOENT) {
+	if (ret && ret != -ENOENT && ret != -ENOSYS) {
 		dev_err(dev, "Failed to get clocks (ret=%d)\n", ret);
 		return ret;
 	}
 
-	err = clk_enable_bulk(&priv->clocks);
-	if (err) {
-		dev_err(dev, "Failed to enable clocks (err=%d)\n", err);
-		goto clk_err;
+	if (!ret) {
+		err = clk_enable_bulk(&priv->clocks);
+		if (err) {
+			dev_err(dev, "Failed to enable clocks (err=%d)\n", err);
+			goto clk_err;
+		}
 	}
 
 	err = reset_get_bulk(dev, &priv->resets);
-	if (err && err != -ENOENT) {
+	if (err && err != -ENOENT && err != -ENOSYS && err != -ENOTSUPP) {
 		dev_err(dev, "failed to get resets (err=%d)\n", err);
 		goto clk_err;
 	}
 
-	err = reset_deassert_bulk(&priv->resets);
-	if (err) {
-		dev_err(dev, "failed to deassert resets (err=%d)\n", err);
-		goto reset_err;
+	if (!err) {
+		err = reset_deassert_bulk(&priv->resets);
+		if (err) {
+			dev_err(dev, "failed to deassert resets (err=%d)\n", err);
+			goto reset_err;
+		}
 	}
 
 	err = generic_setup_phy(dev, &priv->phy, 0, PHY_MODE_USB_HOST, 0);
@@ -67,11 +80,11 @@ phy_err:
 
 reset_err:
 	ret = reset_release_bulk(&priv->resets);
-	if (ret)
+	if (ret && ret != -ENOSYS && ret != -ENOTSUPP)
 		dev_err(dev, "failed to release resets (ret=%d)\n", ret);
 clk_err:
 	ret = clk_release_bulk(&priv->clocks);
-	if (ret)
+	if (ret && ret != -ENOSYS && ret != -ENOTSUPP)
 		dev_err(dev, "failed to release clocks (ret=%d)\n", ret);
 
 	return err;
@@ -91,10 +104,14 @@ static int ohci_usb_remove(struct udevice *dev)
 		return ret;
 
 	ret = reset_release_bulk(&priv->resets);
-	if (ret)
+	if (ret && ret != -ENOSYS && ret != -ENOTSUPP)
 		return ret;
 
-	return clk_release_bulk(&priv->clocks);
+	ret = clk_release_bulk(&priv->clocks);
+	if (ret && ret != -ENOSYS && ret != -ENOTSUPP)
+		return ret;
+
+	return 0;
 }
 
 static const struct udevice_id ohci_usb_ids[] = {

@@ -194,7 +194,11 @@ int gx6702_pad_init(void)
 
 int gx6702_usb_enable(void)
 {
+	static bool enabled;
 	u32 v;
+
+	if (enabled)
+		return 0;
 
 	gx6702_pad_init();
 
@@ -224,6 +228,7 @@ int gx6702_usb_enable(void)
 	gx_clrset(0xA030A20C, 0, (1U << 0));
 
 	mdelay(10);
+	enabled = true;
 
 	return 0;
 }
