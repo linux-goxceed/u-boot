@@ -42,7 +42,9 @@
 	"bootargs=earlycon=gxuart keep_bootcon console=ttyS0,115200n8 rdinit=/init\0" \
 	"loadaddr=0x92000000\0" \
 	"fdt_addr_r=0x91f00000\0" \
-	"ramdisk_addr_r=0x92800000\0" \
+	/* Keep clear of video/monitor/malloc/stack state below 0x92e00000. */ \
+	"ramdisk_addr_r=0x90800000\0" \
+	"initrd_high=0xffffffff\0" \
 	"boot_usb=" \
 		"usb start; " \
 		"fatload usb 0:1 ${loadaddr} uImage; " \
@@ -50,6 +52,8 @@
 		"fatload usb 0:1 ${ramdisk_addr_r} initramfs.uImage; " \
 		"bootm ${loadaddr} ${ramdisk_addr_r} ${fdt_addr_r}\0" \
 	"boot_uart=" \
+		"wdt dev watchdog@a020b000; " \
+		"wdt stop; " \
 		"echo 'host: sb uImage (ymodem) after loady'; " \
 		"loady ${loadaddr}; " \
 		"echo 'host: sb gx6702-gemini.dtb'; " \
