@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0+
 
 #include <init.h>
+#include <env.h>
 #include <spi_flash.h>
+#include <sysinfo.h>
 #include <usb.h>
 #include <asm/io.h>
 #include <asm/global_data.h>
@@ -25,9 +27,27 @@ int board_early_init_f(void)
 	return 0;
 }
 
+static void gx6702_set_identification_env(void)
+{
+	struct udevice *dev;
+	char value[17];
+
+	if (sysinfo_get(&dev) || sysinfo_detect(dev))
+		return;
+
+	if (!sysinfo_get_str(dev, SYSID_SM_SYSTEM_SERIAL,
+			     sizeof(value), value))
+		env_set("serial#", value);
+	if (!sysinfo_get_str(dev, SYSID_SM_BASEBOARD_VERSION,
+			     sizeof(value), value))
+		env_set("board_rev", value);
+}
+
 int board_late_init(void)
 {
 	struct spi_flash *flash;
+
+	gx6702_set_identification_env();
 
 	printf("Board: NationalChip GX6702 (Gemini 6702H5)\n");
 	printf("SPI HW ID: %08x %08x %08x (cfg=%08x)\n",

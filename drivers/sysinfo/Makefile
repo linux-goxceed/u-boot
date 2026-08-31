@@ -4,6 +4,7 @@
 # Mario Six,  Guntermann & Drunck GmbH, mario.six@gdsys.cc
 obj-y += sysinfo-uclass.o
 obj-$(CONFIG_SYSINFO_GAZERBEAM) += gazerbeam.o
+obj-$(CONFIG_SYSINFO_GX6702) += gx6702.o
 obj-$(CONFIG_SYSINFO_GPIO) += gpio.o
 obj-$(CONFIG_SYSINFO_IOT2050) += iot2050.o
 obj-$(CONFIG_SYSINFO_RCAR3) += rcar3.o

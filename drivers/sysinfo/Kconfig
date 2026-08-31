@@ -24,6 +24,15 @@ config SYSINFO_GAZERBEAM
 	help
 	  Support querying device information for the gdsys Gazerbeam board.
 
+config SYSINFO_GX6702
+	bool "Enable sysinfo driver for NationalChip GX6702"
+	depends on TARGET_GX6702
+	default y if TARGET_GX6702
+	help
+	  Read the GX6702 silicon identification fields and expose the public
+	  ID as the system serial number and the chip name as the baseboard
+	  revision.
+
 config SYSINFO_RCAR3
 	bool "Enable sysinfo driver for the Renesas R-Car Gen3"
 	depends on RCAR_GEN3 && I2C_EEPROM

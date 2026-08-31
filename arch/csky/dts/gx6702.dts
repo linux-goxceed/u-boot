@@ -28,6 +28,10 @@
 		stdout-path = "serial0:115200n8";
 	};
 
+	sysinfo {
+		compatible = "nationalchip,gx6702-sysinfo";
+	};
+
 	clocks {
 		#address-cells = <1>;
 		#size-cells = <0>;
