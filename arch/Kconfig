@@ -189,6 +189,7 @@ config CSKY
 	bool "C-SKY architecture"
 	select 32BIT
 	select HAVE_PRIVATE_LIBGCC
+        select ARCH_SUPPORTS_LTO
 	select SUPPORT_LITTLE_ENDIAN
 	select SYS_CACHE_SHIFT_4
 

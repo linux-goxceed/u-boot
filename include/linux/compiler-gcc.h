@@ -10,7 +10,7 @@
 		     + __GNUC_MINOR__ * 100	\
 		     + __GNUC_PATCHLEVEL__)
 
-#if GCC_VERSION < 40600 && !defined(CONFIG_CSKY)
+#if GCC_VERSION < 40600
 # error Sorry, your compiler is too old - please upgrade it.
 #endif
 
