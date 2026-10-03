@@ -127,11 +127,16 @@ obj-$(CONFIG_CMD_MTD) += mtd.o
 obj-$(CONFIG_GX6702_PARTITIONS) += gxpart.o
 obj-$(CONFIG_CMD_GXLOADER) += gxloader.o
 obj-$(CONFIG_GX6702_LPC) += gx_lpc.o gxopen_fw.o gx6702_ck610_lpc.o
-$(obj)/gxopen_fw.o: $(srctree)/lib/nationalchip-lpc/gx6702-lpc.bin
+ifeq ($(CONFIG_TARGET_GX6706),y)
+LPC_FW := gx6706-lpc.bin
+else
+LPC_FW := gx6702-lpc.bin
+endif
+$(obj)/gxopen_fw.o: $(srctree)/lib/nationalchip-lpc/$(LPC_FW)
 
 # Build open LPC firmware automatically from the integrated lib/nationalchip-lpc tree.
-$(srctree)/lib/nationalchip-lpc/gx6702-lpc.bin:
-	$(Q)$(MAKE) -C $(srctree)/lib/nationalchip-lpc
+$(srctree)/lib/nationalchip-lpc/gx6702-lpc.bin $(srctree)/lib/nationalchip-lpc/gx6706-lpc.bin:
+	$(Q)$(MAKE) -C $(srctree)/lib/nationalchip-lpc $(notdir $@)
 
 obj-$(CONFIG_CMD_HD2015) += hd2015.o
 obj-$(CONFIG_CMD_GXLP) += gxlp.o

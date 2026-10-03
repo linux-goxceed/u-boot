@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * NationalChip GX6702 silicon identification
+ * NationalChip GX6702/GX6706 silicon identification
  *
  * The stock GxLoader presents both fields in reverse byte order. Short
  * chip names are zero-padded at the beginning of the raw 12-byte field.
  */
 
 #include <dm.h>
+#include <stdio.h>
+#include <string.h>
 #include <sysinfo.h>
 #include <asm/io.h>
 
@@ -107,6 +109,44 @@ static int gx6702_sysinfo_get_str(struct udevice *dev, int id, size_t size,
 	return 0;
 }
 
+static const char *gx_board_family(const char *name)
+{
+	if (!strncmp(name, "6701", 4) || !strncmp(name, "6702", 4) ||
+	    !strncmp(name, "6703", 4))
+		return "Gemini";
+	if (!strncmp(name, "6705", 4) || !strncmp(name, "6706", 4))
+		return "Cygnus";
+	return NULL;
+}
+
+void gx_sysinfo_print_board(void)
+{
+	struct udevice *dev;
+	char name[GX6702_CHIP_NAME_SIZE + 1];
+	const char *family;
+
+	name[0] = '\0';
+	if (!sysinfo_get(&dev)) {
+		sysinfo_detect(dev);
+		if (sysinfo_get_str(dev, SYSID_SM_BASEBOARD_VERSION,
+				    sizeof(name), name))
+			name[0] = '\0';
+	}
+
+	if (!name[0]) {
+		printf("Board: NationalChip (chip name unavailable)\n");
+		return;
+	}
+
+	family = gx_board_family(name);
+	if (!family) {
+		printf("Board: NationalChip GX%.4s (%.6s)\n", name, name);
+		return;
+	}
+
+	printf("Board: NationalChip GX%.4s (%s %.6s)\n", name, family, name);
+}
+
 static const struct sysinfo_ops gx6702_sysinfo_ops = {
 	.detect = gx6702_sysinfo_detect,
 	.get_str = gx6702_sysinfo_get_str,
@@ -114,6 +154,7 @@ static const struct sysinfo_ops gx6702_sysinfo_ops = {
 
 static const struct udevice_id gx6702_sysinfo_ids[] = {
 	{ .compatible = "nationalchip,gx6702-sysinfo" },
+	{ .compatible = "nationalchip,gx6706-sysinfo" },
 	{ }
 };
 

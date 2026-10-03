@@ -91,6 +91,7 @@ static const struct timer_ops gx6605s_timer_ops = {
 static const struct udevice_id gx6605s_timer_ids[] = {
 	{ .compatible = "csky,gx6605s-timer" },
 	{ .compatible = "nationalchip,gx6702-timer" },
+	{ .compatible = "nationalchip,gx6706-timer" },
 	{}
 };
 

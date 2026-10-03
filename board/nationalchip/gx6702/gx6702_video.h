@@ -26,6 +26,8 @@
 #define CRG_COLD_RESET_SET		0x004
 #define CRG_COLD_RESET_CLEAR		0x008
 #define  CRG_COLD_RESET_JPEG		BIT(2)
+#define GX6706_CRG_HOT_RESET_SET		0x010
+#define GX6706_CRG_HOT_RESET_CLEAR	0x014
 #define CRG_RESET3			0x00C
 #define  CRG_RESET3_DISPLAY		BIT(28)
 /*
@@ -107,6 +109,26 @@
 #define  GFX_L0_FILTER_BYPASS		0x00FF0000
 #define GFX_L0_FB_TOP			0x068	/* bus address of field 0	*/
 #define GFX_L0_FB_BOTTOM		0x06C	/* bus address of field 1	*/
+
+/* GX6706 UYVY plane, recovered from BOOT-128k file 0x79e8/0x87dc. */
+#define GX6706_GFX_L0_BASE		0xA4803000
+#define GX6706_L0_CTRL			0x000
+#define GX6706_L0_VPHASE			0x004
+#define GX6706_L0_DST_POS			0x008
+#define GX6706_L0_SRC_SIZE		0x00C
+#define GX6706_L0_DST_SIZE		0x010
+#define GX6706_L0_SCALE			0x014
+#define GX6706_L0_STRIDE			0x018 /* low 13 bits: pixels, not bytes */
+#define GX6706_L0_FORMAT			0x01C
+#define GX6706_L0_HFILTER			0x020
+#define GX6706_L0_VFILTER			0x024
+#define GX6706_L0_FB_TOP			0x028
+#define GX6706_L0_FB_BOTTOM		0x02C
+#define GX6706_L0_SCALE_CTRL		0x03C
+#define GX6706_L0_HTAPS			0x100
+#define GX6706_L0_VTAPS			0x200
+#define GX6706_L0_PROGRESSIVE		BIT(29)
+#define GX6706_DVE_BASE			0xA4808000
 /*
  * Pixel-clock divider written by gx3201_videoout_init() via FUN_93171174.
  * Bits [23:16] plus CRG+0x24 sel (vendor 0x931715bc / 7165c / 716ba):
@@ -140,9 +162,10 @@
 #define GX6702_DAC_GAIN_DEFAULT_3	0x20
 
 /*
- * Hardware JPEG decoder used by GxLoader's gx3211_svpu_jpeg_decode() at
- * 0x93170c70. Despite the old function name, this is a separate DMA engine;
- * it produces planar Y/Cb/Cr and does not share the CVBS SVPU registers.
+ * Shared GX6702/GX6706 JPEG decoder. GX6702 GxLoader uses it at 0x93170c70;
+ * GX6706 BOOT-128k file +0x7e96 selects the same 0xA4400000 register block.
+ * It produces planar Y/Cb/Cr independently of the display/SVPU. The CRG
+ * hot-reset interface differs between the two SoCs.
  */
 #define GX6702_JPEG_BASE		0xA4400000
 #define JPEG_CTRL			0x000
@@ -254,6 +277,8 @@
 
 /* Synopsys DesignWare HDMI TX, byte-wide registers at base + (reg << 2). */
 #define GX6702_HDMI_BASE		0xA4F00000
+/* GX6706 analog PHY: byte registers at base + (reg << 2). */
+#define GX6706_HDMI_PHY_BASE	0xA0700000
 
 /*
  * DDR is mapped at 0x90000000 for the CPU but the display DMA masters see the
@@ -379,6 +404,26 @@ bool gx6702_hdmi_hpd_connected(void);
 /** gx6702_hdmi_invalidate_edid() - drop cached EDID (e.g. on unplug) */
 void gx6702_hdmi_invalidate_edid(void);
 
+/** Byte at HDMI base + (offset << 2). Same bus the vendor CEC driver uses. */
+u8 gx6702_hdmi_readb(int offset);
+void gx6702_hdmi_writeb(int offset, u8 val);
+
+/**
+ * DesignWare CEC engine.  mode 0 gates the CEC clock; modes 1 and 2 enable it.
+ * Return: 0 when the requested clock state was applied, or a negative errno.
+ */
+int gx6702_cec_set_mode(int mode);
+int gx6702_cec_mode(void);
+/* Claimed logical address, or 15 when none has been claimed. */
+u8 gx6702_cec_logical(void);
+/* Physical address from the HDMI VSDB.  False until EDID provided one. */
+bool gx6702_cec_physical(u16 *pa);
+void gx6702_cec_dump(void);
+int gx6702_cec_poll(unsigned int seconds);
+int gx6702_cec_view_on(void);
+int gx6702_cec_standby(void);
+int gx6702_cec_tx(const u8 *frame, int len);
+
 /**
  * gx6702_video_pick_auto_mode() - choose best eCos mode 1..10 for the sink
  *
@@ -409,7 +454,7 @@ bool gx6702_video_auto_enabled(void);
 enum gx6702_cvbs_state gx6702_video_cvbs_state(void);
 
 /**
- * gx6702_video_show_jpeg() - decode a JPEG with the GX6702 engine and show it
+ * gx6702_video_show_jpeg() - hardware-decode a GX6702/GX6706 JPEG and show it
  * @addr: CPU address of the complete JPEG bitstream
  * @size: number of valid bytes at @addr (maximum 2 MiB)
  * @scale: native, aspect-preserving fit, or full-raster stretch

@@ -1795,23 +1795,23 @@ config CMD_GXLOADER
 config GX6702_LPC
 	bool
 	help
-	  Shared NationalChip GX6702 always-on 8051 (LPC) helpers used by
-	  hd2015 and gxlp: open firmware load, mailbox publish, RTC/alarm
-	  and soft-standby support.
+	  Shared NationalChip always-on 8051 (LPC) helpers used by hd2015
+	  and gxlp.  GX6706 uses the same mailbox with its own panel and
+	  power-cut pins.
 
 config CMD_HD2015
 	bool "hd2015 - NationalChip front-panel HD2015E/TM1650 7-seg display"
-	depends on TARGET_GX6702
+	depends on TARGET_GX6702 || TARGET_GX6706
 	select GX6702_LPC
 	help
-	  Adds the "hd2015" command. On GX6702 it drives the front-panel
-	  display through the open standby-8051 firmware (text, scroll,
-	  brightness, AUX indicators, clock-display mode). The 8051 owns
-	  the TM1650 bus; CK610 GPIO bitbang is not used.
+	  Adds the "hd2015" command. It drives the front-panel display
+	  through the open standby-8051 firmware (text, scroll, brightness,
+	  AUX indicators, clock-display mode). The 8051 owns the TM1650
+	  bus; CK610 GPIO bitbang is not used.
 
 config CMD_GXLP
-	bool "gxlp - NationalChip GX6702 LPC RTC / soft standby"
-	depends on TARGET_GX6702
+	bool "gxlp - NationalChip LPC RTC / soft standby"
+	depends on TARGET_GX6702 || TARGET_GX6706
 	select GX6702_LPC
 	default y if CMD_HD2015
 	help

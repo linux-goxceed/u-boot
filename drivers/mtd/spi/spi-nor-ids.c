@@ -96,6 +96,19 @@ const struct flash_info spi_nor_ids[] = {
 	{ INFO("en25q128b",  0x1c3018, 0, 64 * 1024,  256, 0) },
 	{ INFO("en25qh128",  0x1c7018, 0, 64 * 1024,  256, 0) },
 	{ INFO("en25s64",    0x1c3817, 0, 64 * 1024,  128, SECT_4K) },
+	{ INFO("en25f16", 0x1c3115, 0, 64 * 1024, 32, 0) },
+	{ INFO("en25q16", 0x1c3015, 0, 64 * 1024, 32, 0) },
+	{ INFO("en25qh16", 0x1c7015, 0, 64 * 1024, 32, SECT_4K) },
+	{ INFO("en25f32", 0x1c3116, 0, 64 * 1024, 64, 0) },
+	{ INFO("en25qe32a", 0x1c4116, 0, 64 * 1024, 64, SECT_4K) },
+	{ INFO("en25qh32b", 0x1c7016, 0, 64 * 1024, 64, SECT_4K) },
+	{ INFO("en25qa64a", 0x1c6017, 0, 64 * 1024, 128, SECT_4K) },
+	{ INFO("en25qh64a", 0x1c7017, 0, 64 * 1024, 128, SECT_4K) },
+	{ INFO("en25qx64a", 0x1c7117, 0, 64 * 1024, 128, SECT_4K) },
+	{ INFO("en25qa128a", 0x1c6018, 0, 64 * 1024, 256, SECT_4K) },
+	{ INFO("en25qx128a", 0x1c7118, 0, 64 * 1024, 256, SECT_4K) },
+	/* Juyang JY25VQ128A uses EON's manufacturer ID. */
+	{ INFO("jy25vq128a", 0x1c4018, 0, 64 * 1024, 256, SECT_4K) },
 #endif
 #ifdef CONFIG_SPI_FRAM_FUJITSU
 	/* Fujitsu MB85RS256TY */
@@ -231,6 +244,7 @@ const struct flash_info spi_nor_ids[] = {
 		     SECT_4K | SPI_NOR_QUAD_READ |
 		     SPI_NOR_HAS_LOCK | SPI_NOR_HAS_TB)
 	},
+	{ INFO("gd25ve16c", 0xc84215, 0, 64 * 1024, 32, SECT_4K) },
 #endif
 #ifdef CONFIG_SPI_FLASH_ISSI		/* ISSI */
 	/* ISSI */
@@ -394,6 +408,8 @@ const struct flash_info spi_nor_ids[] = {
 	{ INFO
 	 ("py25f01glc", 0x85631b, 0, 64 * 1024, 2048,
 	  SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ | SPI_NOR_4B_OPCODES) },
+	{ INFO("py25q32hb", 0x852016, 0, 64 * 1024, 64, SECT_4K) },
+	{ INFO("py25q128ha", 0x852018, 0, 64 * 1024, 256, SECT_4K) },
 #endif
 
 #ifdef CONFIG_SPI_FLASH_SILICONKAISER
@@ -487,6 +503,8 @@ const struct flash_info spi_nor_ids[] = {
 		SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ | SPI_NOR_4B_OPCODES | NO_CHIP_ERASE) },
 	{ INFO6("s25fs256t",  0x342b19, 0x0f0890, 128 * 1024, 256,
 		SPI_NOR_QUAD_READ | SPI_NOR_4B_OPCODES) },
+	{ INFO("s25fl128p", 0x012018, 0, 64 * 1024, 256, 0) },
+	{ INFO("s25fl256s", 0x010219, 0, 64 * 1024, 512, 0) },
 #ifdef CONFIG_SPI_FLASH_S28HX_T
 	{ INFO("s28hl256t",  0x345a19,      0, 256 * 1024, 128, SPI_NOR_OCTAL_DTR_READ) },
 	{ INFO("s28hl512t",  0x345a1a,      0, 256 * 1024, 256, SPI_NOR_OCTAL_DTR_READ) },
@@ -676,6 +694,10 @@ const struct flash_info spi_nor_ids[] = {
 	{ INFO("XM25QH512C", 0x204020, 0, 64 * 1024, 1024, SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ | SPI_NOR_4B_OPCODES) },
 	{ INFO("XM25QU512C", 0x204120, 0, 64 * 1024, 1024, SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ | SPI_NOR_4B_OPCODES) },
 	{ INFO("XM25QH01D", 0x204021, 0, 64 * 1024, 2048, SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ | SPI_NOR_4B_OPCODES) },
+	{ INFO("xm25qh16c", 0x204015, 0, 64 * 1024, 32, SECT_4K) },
+	{ INFO("xm25qh64b", 0x206017, 0, 64 * 1024, 128, SECT_4K) },
+	{ INFO("xm25qh128b", 0x206018, 0, 64 * 1024, 256, SECT_4K) },
+	{ INFO("xm25qh128c", 0x204018, 0, 64 * 1024, 256, SECT_4K) },
 #endif
 #ifdef CONFIG_SPI_FLASH_XTX
 	/* XTX Technology Limited */
@@ -719,8 +741,69 @@ const struct flash_info spi_nor_ids[] = {
 #endif
 #ifdef CONFIG_SPI_FLASH_ZBIT
 	/* Zbit Semiconductor Inc. */
+	/*
+	 * 0x5e4016 is the 32 Mbit part. GxLoader prints it as
+	 * ZB25VQ32/T25S32. Single-lane only: this port's controller
+	 * does not issue the dual/quad opcodes.
+	 */
+	{ INFO("zb25vq16a", 0x5e6015, 0, 64 * 1024, 32, SECT_4K) },
+	{ INFO("zb25vq32", 0x5e4016, 0, 64 * 1024, 64, SECT_4K) },
+	{ INFO("zb25vq64", 0x5e4017, 0, 64 * 1024, 128, SECT_4K) },
 	{ INFO("zb25vq128", 0x5e4018, 0, 64 * 1024, 256,
 	       SECT_4K | SPI_NOR_DUAL_READ | SPI_NOR_QUAD_READ) },
+#endif
+#ifdef CONFIG_SPI_FLASH_BOYA
+	/* Boya Microelectronics */
+	{ INFO("by25q32bs", 0x684016, 0, 64 * 1024, 64, SECT_4K) },
+	{ INFO("by25q64as", 0x684017, 0, 64 * 1024, 128, SECT_4K) },
+	{ INFO("by25q128as", 0x684018, 0, 64 * 1024, 256, SECT_4K) },
+#endif
+#ifdef CONFIG_SPI_FLASH_ESMT
+	/* Elite Semiconductor Memory Technology */
+	{ INFO("f25l016", 0x8c2115, 0, 64 * 1024, 32, 0) },
+	{ INFO("f25l032", 0x8c2116, 0, 64 * 1024, 64, SECT_4K) },
+#endif
+#ifdef CONFIG_SPI_FLASH_FIDELIX
+	/* Fidelix */
+	{ INFO("fm25q64a", 0xf83217, 0, 64 * 1024, 128, SECT_4K) },
+#endif
+#ifdef CONFIG_SPI_FLASH_FMD
+	/* Fremont Micro Devices */
+	{ INFO("f25sqa032m", 0x494016, 0, 64 * 1024, 64, SECT_4K) },
+#endif
+#ifdef CONFIG_SPI_FLASH_FUDAN
+	/* Fudan Microelectronics */
+	{ INFO("fm25w32", 0xa12816, 0, 64 * 1024, 64, SECT_4K) },
+	{ INFO("fs25q032", 0xa14016, 0, 64 * 1024, 64, SECT_4K) },
+	{ INFO("fs25q064", 0xa14017, 0, 64 * 1024, 128, SECT_4K) },
+	{ INFO("fm25q128a", 0xa14018, 0, 64 * 1024, 256, SECT_4K) },
+#endif
+#ifdef CONFIG_SPI_FLASH_GIANTEC
+	/* Giantec Semiconductor */
+	{ INFO("gt25q32a", 0xc46016, 0, 64 * 1024, 64, SECT_4K) },
+#endif
+#ifdef CONFIG_SPI_FLASH_PARAGON
+	/* Paragon Technology */
+	{ INFO("pn25f32", 0xe04016, 0, 64 * 1024, 64, SECT_4K) },
+#endif
+#ifdef CONFIG_SPI_FLASH_PMC
+	/* PMC */
+	{ INFO("pm25lq032", 0x7f9d46, 0, 64 * 1024, 64, SECT_4K) },
+#endif
+#ifdef CONFIG_SPI_FLASH_SIXIN
+	/* Sixin */
+	{ INFO("sx25q64a", 0x8f4017, 0, 64 * 1024, 128, SECT_4K) },
+#endif
+#ifdef CONFIG_SPI_FLASH_UCUNDATA
+	/* UCUNDATA */
+	{ INFO("uc25hq32ia", 0xb36016, 0, 64 * 1024, 64, SECT_4K) },
+	{ INFO("uc25hq64ia", 0xb36017, 0, 64 * 1024, 128, SECT_4K) },
+#endif
+#ifdef CONFIG_SPI_FLASH_ZETTA
+	/* Zetta Device */
+	{ INFO("zd25q32", 0xba4016, 0, 64 * 1024, 64, SECT_4K) },
+	{ INFO("zd25q64a", 0xba4017, 0, 64 * 1024, 128, SECT_4K) },
+	{ INFO("zd25q64b", 0xba3217, 0, 64 * 1024, 128, SECT_4K) },
 #endif
 	{ },
 };

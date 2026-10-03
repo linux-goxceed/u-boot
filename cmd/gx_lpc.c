@@ -34,8 +34,14 @@
 #define GX_LPC_CTRL_RUN		BIT(0)
 #define GX_LPC_CTRL_RESET	BIT(4)
 #define GX_LPC_CTRL_ENABLE	BIT(16)
+#if defined(CONFIG_TARGET_GX6706)
+/* gpio.xml panel clk,data = 0,1.  Do not program the Gemini 13/14 mux. */
+#define GX_LPC_PANEL_CLK	0
+#define GX_LPC_PANEL_DAT	1
+#else
 #define GX_LPC_PANEL_CLK	13
 #define GX_LPC_PANEL_DAT	14
+#endif
 #define GX_LPC_MAILBOX_OFF	0x100
 #define GX_LPC_STATUS_OFF	0x108
 #define GX_LPC_SCROLL_OFF	0x110
@@ -119,6 +125,18 @@ static void gx_panel_power_init(void)
 	void __iomem *gpio = (void __iomem *)GX_PANEL_GPIO;
 	int i, term = 0;
 
+#if defined(CONFIG_TARGET_GX6706)
+	/*
+	 * The Gemini pin records mux CK610 GPIOs 13/14.  GX6706 panel
+	 * clock and data are 8051 P0.0/P0.1, so leave this window alone.
+	 */
+	(void)ctl;
+	(void)gpio;
+	(void)i;
+	(void)term;
+	return;
+#endif
+
 	for (i = 0; i < ARRAY_SIZE(gx_panel_pin_table); i++) {
 		const u32 w = gx_panel_pin_table[i];
 		u8 b0 = w & 0xff;
@@ -170,16 +188,23 @@ static u8 gx_lpc_suspend_control;
 static u8 gx_lpc_suspend_sequence;
 /* Soft-standby RTC wake countdown; 0 with WAKE_ALARM uses armed absolute alarm. */
 static u32 gx_lpc_suspend_seconds;
-/* 0 = LPC default (TM1650 DIG4/KI2 = 0x4f); else exact scan code for power. */
+/* 0 = LPC default (0x4f or 0x77); else exact scan code for power. */
 u8 gx_lpc_wake_key;
+/* gxlp wake key.  0 keeps both stock power presses. */
+static u8 gx_lpc_wake_panel;
 static bool gx_lpc_suspend_cache_valid;
+static u8 gx_lpc_cecmode;
 
 static u8 gx_lpc8051_control(void)
 {
 	if (!gx_lpc_brightness)
 		return 0;
 
-	/* TM1650 encodes maximum (step 8) with a zero brightness field. */
+	/*
+	 * HD2015 and FD650 level 8 is duty 000, control byte 0x01.  That is
+	 * what ABI 1.7 sends, and it is full brightness on the LXDVB104.
+	 * 0x71 and 0xFF are dim on that panel.  Levels 1..7 are 0x11..0x71.
+	 */
 	if (gx_lpc_brightness == GX_TM1650_BRIGHT_MAX)
 		return GX_TM1650_CTRL_ON;
 
@@ -555,10 +580,26 @@ static void gx_lpc_ck610_handoff_stop(bool quiet)
 }
 
 /*
+ * The HDMI CEC driver owns the cached address.  These stubs keep the LPC
+ * command building on a board that has no CEC object.
+ */
+__weak u8 gx6702_cec_logical(void)
+{
+	return 15;
+}
+
+__weak bool gx6702_cec_physical(u16 *pa)
+{
+	if (pa)
+		*pa = 0;
+	return false;
+}
+
+/*
  * Soft standby: STOP+bit1, live dimmed clock.  Wake sources:
  *   wake_seconds > 0  — cold-boot after countdown (WAKE_ALARM)
  *   arm_alarm         — cold-boot at HH:MM:SS (WAKE_ALARM, seconds=0)
- *   otherwise         — power key / IR only
+ *   otherwise         — power key / IR, and CEC when cecmode is 1 or 2
  */
 int gx_lpc8051_suspend_soft(u32 wake_seconds, bool arm_alarm,
 			    u8 alarm_hour, u8 alarm_minute,
@@ -588,8 +629,14 @@ int gx_lpc8051_suspend_soft(u32 wake_seconds, bool arm_alarm,
 
 	printf("gxlpc: DESTRUCTIVE SOFT STANDBY\n");
 	printf("gxlpc: CK610 RAM and this U-Boot session will be lost\n");
-	printf("gxlpc: STOP+bit1 (dim clock; IR/power-key cold-boot, key=0x%02x)\n",
-	       gx_lpc_wake_key ? gx_lpc_wake_key : GX_LPC_TM1650_KEY_POWER);
+	if (gx_lpc_wake_key)
+		printf("gxlpc: STOP+bit1 (dim clock; IR/power-key cold-boot, key=0x%02x)\n",
+		       gx_lpc_wake_key);
+	else if (gx_lpc_wake_panel)
+		printf("gxlpc: STOP+bit1 (dim clock; IR/power-key cold-boot, key=0x%02x)\n",
+		       gx_lpc_wake_panel);
+	else
+		printf("gxlpc: STOP+bit1 (dim clock; IR/power-key cold-boot, key=0x4f or 0x77)\n");
 	if (wake_seconds)
 		printf("gxlpc: RTC wake in %u seconds\n", wake_seconds);
 	else if (arm_alarm)
@@ -597,6 +644,25 @@ int gx_lpc8051_suspend_soft(u32 wake_seconds, bool arm_alarm,
 		       alarm_hour, alarm_minute, alarm_second);
 	else
 		printf("gxlpc: press power key or IR power to cold-boot\n");
+	if (gx_lpc_cecmode == 1 || gx_lpc_cecmode == 2) {
+		u16 pa = 0;
+		u8 la = gx6702_cec_logical();
+		bool have_pa = gx6702_cec_physical(&pa);
+
+		writel((u32)have_pa |
+		       ((u32)(pa >> 8) << 8) |
+		       ((u32)(pa & 0xff) << 16) |
+		       ((u32)la << 24),
+		       (void __iomem *)(GX_LPC_SHARED + 0x178));
+		if (have_pa)
+			printf("gxlpc: CEC wake on mode %u, physical %x.%x.%x.%x, logical %u\n",
+			       gx_lpc_cecmode,
+			       (pa >> 12) & 0xf, (pa >> 8) & 0xf,
+			       (pa >> 4) & 0xf, pa & 0xf, la);
+		else
+			printf("gxlpc: CEC wake on mode %u, physical address unknown (run gxcec on)\n",
+			       gx_lpc_cecmode);
+	}
 
 	gx_lpc_ck610_prepare_stop();
 	gx_lpc_suspend_sequence++;
@@ -681,6 +747,151 @@ int gx_lpc8051_suspend_bit1_only(void)
 	return -EIO;
 }
 
+static u8 gx_lpc_cec_sequence;
+
+void gx_lpc8051_set_cecmode(u8 mode)
+{
+	gx_lpc_cecmode = mode;
+	writel(mode, (void __iomem *)(GX_LPC_SHARED + 0x90));
+}
+
+int gx_lpc8051_cec_post(u8 opcode)
+{
+	void __iomem *cmd = (void __iomem *)(GX_LPC_SHARED + 0x168);
+	void __iomem *status_reg =
+		(void __iomem *)(GX_LPC_SHARED + 0x108);
+	u32 status;
+	u8 seq = gx_lpc_cec_sequence + 1;
+	int i;
+
+	if (!seq)
+		seq = 1;
+	status = readl(status_reg);
+	if ((status & 0xff) != GX_LPC_STATUS_READY ||
+	    ((status >> 8) & 0xff) != GX_LPC_ABI_MAJOR ||
+	    ((status >> 16) & 0xff) != GX_LPC_ABI_MINOR) {
+		printf("gxlpc: CEC post needs open LPC ABI %u.%u\n",
+		       GX_LPC_ABI_MAJOR, GX_LPC_ABI_MINOR);
+		return -ENODEV;
+	}
+	gx_lpc_cec_sequence = seq;
+	writel(opcode | ((u32)seq << 8), cmd);
+	for (i = 0; i < 1000; i++) {
+		if (((readl(cmd) >> 16) & 0xff) == seq)
+			return 0;
+		udelay(1000);
+	}
+	return -ETIMEDOUT;
+}
+
+static u8 gx_lpc_wake_ir_count;
+static u16 gx_lpc_wake_ir[4];
+static u8 gx_lpc_wake_sequence;
+
+static const u16 gx_lpc_shared_ir[] = {
+	0xbfaf, 0xbbaf, 0xff65, 0x0059, 0x0101,
+};
+
+static int gx_lpc_wake_publish(void)
+{
+	void __iomem *base = (void __iomem *)(GX_LPC_SHARED + 0x16c);
+	void __iomem *status_reg = (void __iomem *)(GX_LPC_SHARED + 0x108);
+	u32 status;
+	u32 ir0, ir1;
+	u8 seq = gx_lpc_wake_sequence + 1;
+	int i;
+
+	if (!seq)
+		seq = 1;
+	status = readl(status_reg);
+	if ((status & 0xff) != GX_LPC_STATUS_READY ||
+	    ((status >> 8) & 0xff) != GX_LPC_ABI_MAJOR ||
+	    ((status >> 16) & 0xff) != GX_LPC_ABI_MINOR) {
+		printf("gxlpc: wake config needs open LPC ABI %u.%u\n",
+		       GX_LPC_ABI_MAJOR, GX_LPC_ABI_MINOR);
+		return -ENODEV;
+	}
+	ir0 = gx_lpc_wake_ir[0] | ((u32)gx_lpc_wake_ir[1] << 16);
+	ir1 = gx_lpc_wake_ir[2] | ((u32)gx_lpc_wake_ir[3] << 16);
+	writel(ir0, base + 4);
+	writel(ir1, base + 8);
+	writel(gx_lpc_wake_panel | ((u32)seq << 8) |
+	       ((u32)gx_lpc_wake_ir_count << 24), base);
+	gx_lpc_wake_sequence = seq;
+	for (i = 0; i < 1000; i++) {
+		if (((readl(base) >> 16) & 0xff) == seq)
+			return 0;
+		udelay(1000);
+	}
+	return -ETIMEDOUT;
+}
+
+int gx_lpc8051_wake_show(void)
+{
+	unsigned int i;
+	u8 key = gx_lpc_wake_panel;
+
+	if (!key)
+		key = GX_LPC_TM1650_KEY_POWER;
+	printf("gxlpc: panel wake key 0x%02x%s\n", key,
+	       gx_lpc_wake_panel ? "" : " (default)");
+	printf("gxlpc: shared IR");
+	for (i = 0; i < ARRAY_SIZE(gx_lpc_shared_ir); i++)
+		printf(" 0x%04x", gx_lpc_shared_ir[i]);
+	printf("\n");
+	if (!gx_lpc_wake_ir_count) {
+		printf("gxlpc: extra IR none\n");
+		return 0;
+	}
+	printf("gxlpc: extra IR");
+	for (i = 0; i < gx_lpc_wake_ir_count; i++)
+		printf(" 0x%04x", gx_lpc_wake_ir[i]);
+	printf("\n");
+	return 0;
+}
+
+int gx_lpc8051_wake_set_key(u8 key)
+{
+	int ret;
+
+	gx_lpc_wake_panel = key;
+	ret = gx_lpc_wake_publish();
+	if (!ret)
+		gx_lpc8051_wake_show();
+	return ret;
+}
+
+int gx_lpc8051_wake_add_ir(u16 code)
+{
+	int ret;
+
+	if (!code)
+		return -EINVAL;
+	if (gx_lpc_wake_ir_count >= ARRAY_SIZE(gx_lpc_wake_ir)) {
+		printf("gxlpc: extra IR list is full\n");
+		return -ENOSPC;
+	}
+	gx_lpc_wake_ir[gx_lpc_wake_ir_count++] = code;
+	ret = gx_lpc_wake_publish();
+	if (ret)
+		gx_lpc_wake_ir_count--;
+	else
+		gx_lpc8051_wake_show();
+	return ret;
+}
+
+int gx_lpc8051_wake_clear_ir(void)
+{
+	int ret;
+
+	memset(gx_lpc_wake_ir, 0, sizeof(gx_lpc_wake_ir));
+	gx_lpc_wake_ir_count = 0;
+	ret = gx_lpc_wake_publish();
+	if (!ret)
+		gx_lpc8051_wake_show();
+	return ret;
+}
+
 void gx_lpc8051_set_brightness(unsigned int brightness)
 {
 	gx_lpc8051_adopt_rtc_command();
@@ -735,6 +946,7 @@ int gx_lpc8051_start(const u8 *fw, ulong fw_size,
 		writel(0, shared + i);
 	writel(GX_LPC_SHARED_MAGIC, shared + 0x00);
 	writel(GX_LPC_CLOCK_HZ, shared + 0x74);
+	writel(gx_lpc_cecmode, shared + 0x90);
 	/* panelio=<clock>,<data>; consumed by firmware function 0x12f5. */
 	writel(GX_LPC_PANEL_CLK, shared + 0x78);
 	writel(GX_LPC_PANEL_DAT, shared + 0x7c);
@@ -755,6 +967,10 @@ int gx_lpc8051_start(const u8 *fw, ulong fw_size,
 	gx_lpc_suspend_sequence = 0;
 	gx_lpc_suspend_seconds = 0;
 	gx_lpc_wake_key = 0;
+	gx_lpc_wake_panel = 0;
+	gx_lpc_wake_ir_count = 0;
+	gx_lpc_wake_sequence = 0;
+	memset(gx_lpc_wake_ir, 0, sizeof(gx_lpc_wake_ir));
 	gx_lpc_suspend_cache_valid = true;
 	gx_lpc8051_write_text(text);
 
@@ -898,8 +1114,7 @@ int gx_lpc8051_probe_keys(void)
 		return -ENODEV;
 	}
 
-	printf("gxlpc: probing keys/IR for 8s (power TM1650=0x%02x IR=0059/0101/bfaf/...)\n",
-	       GX_LPC_TM1650_KEY_POWER);
+	printf("gxlpc: probing keys/IR for 8s (power TM1650=0x4f or 0x77 IR=0059/0101/bfaf/...)\n");
 	for (i = 0; i < 80; i++) {
 		u8 key = readb(keyp);
 		u16 ir = readb(ir_lo) | ((u16)readb(ir_hi) << 8);
@@ -931,7 +1146,7 @@ int gx_lpc_ensure_open(const char *text)
 		return 0;
 
 	return gx_lpc8051_start(gxopen_fw, gxopen_fw_end - gxopen_fw,
-				"embedded open gx6702-lpc.bin",
+				"embedded open lpc firmware",
 				text ? text : "boot");
 }
 

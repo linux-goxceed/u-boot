@@ -21,8 +21,18 @@ config TARGET_GX6702
 	select SUPPORT_OF_CONTROL
 	select OF_CONTROL
 
+config TARGET_GX6706
+	bool "NationalChip GX6706 (Cygnus)"
+	select CPU_CK610
+	select BOARD_LATE_INIT
+	select SYS_NS16550
+	select GX6706_SPI
+	select SUPPORT_OF_CONTROL
+	select OF_CONTROL
+
 endchoice
 
 source "board/nationalchip/gx6702/Kconfig"
+source "board/nationalchip/gx6706/Kconfig"
 
 endmenu

@@ -2,7 +2,7 @@
 
 #include <cpu_func.h>
 #include <init.h>
-#include <configs/gx6702.h>
+#include <config.h>
 #include <asm/global_data.h>
 
 gd_t *gd;
@@ -21,5 +21,5 @@ int dram_init(void)
 
 /* The driver-model sysreset watchdog supplies reset_cpu() and do_reset(). */
 #ifndef CONFIG_SYSRESET
-#error "GX6702 requires CONFIG_SYSRESET for a working hardware reset"
+#error "This board requires CONFIG_SYSRESET for a working hardware reset"
 #endif

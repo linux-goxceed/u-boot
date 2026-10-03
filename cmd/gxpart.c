@@ -26,7 +26,12 @@
 #include <vsprintf.h>
 #include <linux/string.h>
 
+#ifdef CONFIG_TARGET_GX6706
+/* 128 KiB BOOT; TABLE follows at 0x20000. */
+#define GXPART_TABLE_OFFSET	0x20000
+#else
 #define GXPART_TABLE_OFFSET	0x10000
+#endif
 #define GXPART_TABLE_LEN	512
 #define GXPART_REC_SIZE		24
 #define GXPART_NAME_LEN		9
@@ -117,5 +122,6 @@ static int do_gxpart(struct cmd_tbl *cmdtp, int flag, int argc,
 U_BOOT_CMD(gxpart, 2, 1, do_gxpart,
 	   "parse GxLoader SPI-flash partition table",
 	   "[table_offset]\n"
-	   "    - read/parse the GxLoader partition table (default @0x10000)\n"
+	   "    - read/parse the GxLoader partition table\n"
+	   "      (default @0x10000, or @0x20000 on GX6706)\n"
 	   "      and install a matching 'mtdparts' environment variable");

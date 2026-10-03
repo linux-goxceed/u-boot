@@ -25,13 +25,15 @@ config SYSINFO_GAZERBEAM
 	  Support querying device information for the gdsys Gazerbeam board.
 
 config SYSINFO_GX6702
-	bool "Enable sysinfo driver for NationalChip GX6702"
-	depends on TARGET_GX6702
-	default y if TARGET_GX6702
+	bool "Enable sysinfo driver for NationalChip GX6702/GX6706"
+	depends on TARGET_GX6702 || TARGET_GX6706
+	default y if TARGET_GX6702 || TARGET_GX6706
 	help
-	  Read the GX6702 silicon identification fields and expose the public
+	  Read the shared silicon identification fields and expose the public
 	  ID as the system serial number and the chip name as the baseboard
-	  revision.
+	  revision. The late-init banner uses the first 4 and 6 characters of
+	  that chip name. 6701/6702/6703 are shown as Gemini, and 6705/6706
+	  as Cygnus.
 
 config SYSINFO_RCAR3
 	bool "Enable sysinfo driver for the Renesas R-Car Gen3"

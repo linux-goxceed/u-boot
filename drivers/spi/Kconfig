@@ -687,6 +687,15 @@ config GX6702_SPI
 	  on GX6702/GX6605 boards. Driver-model driver using spi-mem for NOR
 	  flash access; the controller is single-lane (no dual/quad).
 
+config GX6706_SPI
+	bool "NationalChip GX6706 SPI controller"
+	depends on DM_SPI
+	select SPI_MEM
+	help
+	  Enable the NationalChip Cygnus DesignWare SSI at 0xA0E00000. The
+	  driver follows the GxLoader TX-only then RX-only sequence and the
+	  external chip-select latch. Single-lane NOR only.
+
 config FSL_ESPI
 	bool "Freescale eSPI driver"
 	depends on MPC85xx

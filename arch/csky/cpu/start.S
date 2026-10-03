@@ -1,11 +1,10 @@
 /* SPDX-License-Identifier: GPL-2.0+ */
 /*
- * GX6702 / C-SKY CK610 (ABIV1) startup.
+ * GX6702 / GX6706 C-SKY CK610 (ABIV1) startup.
  *
- * U-Boot is loaded into DDR by a GX6702 IPL (the open gxipl implementation or
- * the legacy vendor stage-1).  The IPL has already brought up clocks, cache,
- * MMU and DDR before it jumps to us, so we only need a stack and a call into
- * the generic board_init_f() path.
+ * U-Boot is loaded into DDR by gxipl (or the legacy vendor stage-1).  The IPL
+ * has already brought up clocks, cache, MMU and DDR before it jumps to us, so
+ * we only need a stack and a call into the generic board_init_f() path.
  *
  * ABIV1 register convention (csky-linux-gcc):
  *   r0  = stack pointer
@@ -15,7 +14,6 @@
 
 #include <asm-offsets.h>
 #include <config.h>
-#include <configs/gx6702.h>
 
 	.section .text.start, "ax"
 	.global _start

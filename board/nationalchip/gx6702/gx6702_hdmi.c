@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * GX6702 glue for the Synopsys DesignWare HDMI transmitter.
+ * GX6702/GX6706 glue for the Synopsys DesignWare HDMI transmitter.
  *
  * The vendor loader carries the DWC "software api 2.12" core, so
  * drivers/video/dw_hdmi.c drives the same register set; only the bus access
@@ -125,11 +125,24 @@ static void gx6702_phy_i2c_write(struct dw_hdmi *hdmi, u16 data, u8 addr)
  * 0x931731E0-0x93173246 instead, which is otherwise the same power-down,
  * reset, program, power-up order.
  */
+static int gx6702_phy_wait_lock(struct dw_hdmi *hdmi)
+{
+	ulong start = get_timer(0);
+
+	do {
+		if (gx6702_hdmi_read(hdmi, HDMI_PHY_STAT0) &
+		    HDMI_PHY_TX_PHY_LOCK)
+			return 0;
+		udelay(100);
+	} while (get_timer(start) < GX6702_PHY_LOCK_TIMEOUT_MS);
+
+	return -ETIMEDOUT;
+}
+
 static int gx6702_hdmi_phy_set(struct dw_hdmi *hdmi, uint mpixelclock)
 {
 	const struct hdmi_mpll_config *mpll;
 	const struct hdmi_phy_config *phy;
-	ulong start;
 	uint i;
 
 	for (i = 0; gx6702_mpll_cfg[i].mpixelclock != ~0UL; i++)
@@ -198,19 +211,131 @@ static int gx6702_hdmi_phy_set(struct dw_hdmi *hdmi, uint mpixelclock)
 	 * always reports success without waiting.  Wait for the bit to be set
 	 * instead: an unlocked PLL means no TMDS clock and a blank sink.
 	 */
-	start = get_timer(0);
-	do {
-		if (gx6702_hdmi_read(hdmi, HDMI_PHY_STAT0) &
-		    HDMI_PHY_TX_PHY_LOCK)
-			return 0;
-		udelay(100);
-	} while (get_timer(start) < GX6702_PHY_LOCK_TIMEOUT_MS);
+	if (!gx6702_phy_wait_lock(hdmi))
+		return 0;
 
-	log_warning("gx6702-hdmi: PHY PLL did not lock for %u Hz\n",
-		    mpixelclock);
+	log_warning("gx6702-hdmi: PHY PLL did not lock for %u Hz (conf0=%02x stat0=%02x)\n",
+		    mpixelclock,
+		    gx6702_hdmi_read(hdmi, HDMI_PHY_CONF0),
+		    gx6702_hdmi_read(hdmi, HDMI_PHY_STAT0));
 
 	return -ETIMEDOUT;
 }
+
+/*
+ * GX6706 has a separate analog PHY, not the GX6702 Gen2 PHY I2C slave.
+ * GxLoader's byte accessors are at file offsets 0x8d9c/0x8db0 in
+ * BOOT-128k-gx6706.bin; its configuration sequence is at 0xa23e-0xa496.
+ * The live stock 1080i50 dump confirms the 74.25 MHz row and both locks.
+ */
+#define GX6706_PHY_WRITE_DELAY_US	200
+#define GX6706_PHY_LOCK_ATTEMPTS	1000
+#define GX6706_PHY_LOCK_DELAY_US	100
+
+static const u8 gx6706_phy_regs[] = {
+	0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xab, 0xac, 0xad, 0xbf, 0xc0,
+};
+
+static const struct gx6706_phy_config {
+	uint mpixelclock;
+	u8 values[ARRAY_SIZE(gx6706_phy_regs)];
+} gx6706_phy_cfg[] = {
+	{ 27000000, {
+		0x01, 0xf0, 0x5a, 0x3a, 0x6a, 0x64, 0x01, 0x28, 0x03,
+		0x11, 0x11,
+	} },
+	{ 74250000, {
+		0x04, 0xf1, 0xef, 0x35, 0x61, 0x64, 0x01, 0x14, 0x01,
+		0x11, 0x11,
+	} },
+	{ 148500000, {
+		0x01, 0xf0, 0x63, 0x15, 0x41, 0x42, 0x04, 0x50, 0x01,
+		0x22, 0x22,
+	} },
+};
+
+static u8 gx6706_phy_read(u8 reg)
+{
+	return readb(GX6706_HDMI_PHY_BASE + ((ulong)reg << 2));
+}
+
+static void gx6706_phy_write(u8 reg, u8 val)
+{
+	writeb(val, GX6706_HDMI_PHY_BASE + ((ulong)reg << 2));
+	udelay(GX6706_PHY_WRITE_DELAY_US);
+}
+
+static void gx6706_phy_mod(u8 reg, u8 clear, u8 set)
+{
+	gx6706_phy_write(reg, (gx6706_phy_read(reg) & ~clear) | set);
+}
+
+static int gx6706_hdmi_phy_set(struct dw_hdmi *hdmi, uint mpixelclock)
+{
+	const struct gx6706_phy_config *cfg = NULL;
+	u8 a9 = 0, af = 0;
+	uint i;
+
+	for (i = 0; i < ARRAY_SIZE(gx6706_phy_cfg); i++) {
+		if (mpixelclock == gx6706_phy_cfg[i].mpixelclock) {
+			cfg = &gx6706_phy_cfg[i];
+			break;
+		}
+	}
+	if (!cfg)
+		return -EINVAL;
+
+	/* Run pixel/TMDS clocks before waiting, as in the stock logo path. */
+	gx6702_hdmi_write(hdmi, 0x64, HDMI_MC_CLKDIS);
+	gx6702_hdmi_write(hdmi, 0x06, HDMI_PHY_CONF0);
+
+	gx6706_phy_mod(0xbe, 0x70, 0);
+	gx6706_phy_mod(0x00, 0xc0, 0);
+	gx6706_phy_mod(0x00, 0, 0xc0);
+	gx6706_phy_mod(0xb4, 0, 0x07);
+	gx6706_phy_mod(0xcc, 0x0f, 0);
+	gx6706_phy_mod(0xb2, 0x0f, 0);
+	gx6706_phy_write(0xa0, 0x01);
+	gx6706_phy_write(0xaa, 0x0f);
+	for (i = 0; i < ARRAY_SIZE(gx6706_phy_regs); i++)
+		gx6706_phy_write(gx6706_phy_regs[i], cfg->values[i]);
+	gx6706_phy_write(0xa0, 0x00);
+	gx6706_phy_write(0xaa, 0x0e);
+	gx6706_phy_mod(0xb2, 0, 0x0f);
+	gx6706_phy_mod(0xcc, 0, 0x0f);
+	gx6706_phy_mod(0xb0, 0, 0x0e);
+
+	/* Bound the poll count even if the board's timer is stopped. */
+	for (i = 0; i < GX6706_PHY_LOCK_ATTEMPTS; i++) {
+		a9 = gx6706_phy_read(0xa9);
+		af = gx6706_phy_read(0xaf);
+		if ((a9 & BIT(0)) && (af & BIT(0)))
+			break;
+		udelay(GX6706_PHY_LOCK_DELAY_US);
+	}
+	if (i == GX6706_PHY_LOCK_ATTEMPTS) {
+		log_warning("gx6706-hdmi: analog PHY did not lock for %u Hz (a9=%02x af=%02x stat0=%02x clkdis=%02x)\n",
+			    mpixelclock, a9, af,
+			    gx6702_hdmi_read(hdmi, HDMI_PHY_STAT0),
+			    gx6702_hdmi_read(hdmi, HDMI_MC_CLKDIS));
+		return -ETIMEDOUT;
+	}
+
+	mdelay(10);
+	mdelay(20);
+	gx6706_phy_mod(0xbe, 0, 0x70);
+	gx6706_phy_mod(0x02, 0x01, 0);
+	gx6706_phy_mod(0x02, 0, 0x01);
+	mdelay(20);
+	log_info("gx6706-hdmi: analog PHY locked at %u Hz (a9=%02x af=%02x)\n",
+		 mpixelclock, a9, af);
+
+	return 0;
+}
+
+static const struct dw_hdmi_phy_ops gx6706_hdmi_phy_ops = {
+	.phy_set	= gx6706_hdmi_phy_set,
+};
 
 static const struct dw_hdmi_phy_ops gx6702_hdmi_phy_ops = {
 	.phy_set	= gx6702_hdmi_phy_set,
@@ -224,7 +349,8 @@ static struct dw_hdmi gx6702_hdmi = {
 	.i2c_clk_high	= 0xad,
 	.i2c_clk_low	= 0xc8,
 	.reg_io_width	= 4,
-	.ops		= &gx6702_hdmi_phy_ops,
+	.ops		= IS_ENABLED(CONFIG_TARGET_GX6706) ?
+			  &gx6706_hdmi_phy_ops : &gx6702_hdmi_phy_ops,
 	.write_reg	= gx6702_hdmi_write,
 	.read_reg	= gx6702_hdmi_read,
 
@@ -239,6 +365,16 @@ static struct dw_hdmi gx6702_hdmi = {
 		.enc_out_bus_format	= MEDIA_BUS_FMT_RGB888_1X24,
 	},
 };
+
+u8 gx6702_hdmi_readb(int offset)
+{
+	return gx6702_hdmi_read(&gx6702_hdmi, offset);
+}
+
+void gx6702_hdmi_writeb(int offset, u8 val)
+{
+	gx6702_hdmi_write(&gx6702_hdmi, val, offset);
+}
 
 /*
  * hdmi_enable_video_path() bypasses the converter and leaves its clock gated
@@ -389,8 +525,10 @@ int gx6702_hdmi_enable(const struct gx6702_video_mode_info *mode)
 		return ret;
 	}
 
-	/* Match eCos's steady Gen2 control state after every successful lock. */
-	gx6702_hdmi_write(&gx6702_hdmi, 0x0e, HDMI_PHY_CONF0);
+	/* GX6706 logo stays at 0x06.  Gemini eCos settles at 0x0e. */
+	gx6702_hdmi_write(&gx6702_hdmi,
+			  IS_ENABLED(CONFIG_TARGET_GX6706) ? 0x06 : 0x0e,
+			  HDMI_PHY_CONF0);
 
 	gx6702_hdmi_csc_enable(&gx6702_hdmi);
 	/* Always run this to match eCos AVI contents and auto-send settings. */

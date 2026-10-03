@@ -6,6 +6,18 @@
  * 8051 XDATA offsets.  The CK610 sees the same bytes at 0xa4d00000 + offset.
  * Bytes 0x0100..0x0107 are command data written by U-Boot using aligned words;
  * bytes 0x0108..0x010f are firmware-owned status.
+ *
+ * LXDVB501 eCos LPC setup at 0x90348d5c stores cecmode (strtol, base 10) as a
+ * 32-bit word at offset 0x90 of the 0x98-byte shared struct, CK610
+ * 0xA4D00090.  The matching store is mov r7,r6; addu r7,r14; st.w r2,(r7,0)
+ * at file 0x349024, and the r6 immediate 0x90 is the literal at file
+ * 0x348fc0.  Neighbouring words are timesummer at 0x88 and curtime at 0x8c.
+ * The vendor 8051 adds 0x90 to the struct base in IRAM 0x4F/0x50.  Mode 1 or 2
+ * connects P0.5 to the LPC CEC engine and posts System Standby (0x36) when
+ * that image starts.  Mode 1 posts Image View On (0x04) before a power-key
+ * cold boot.  ABI 1.8 also accepts an explicit post at mailbox 0x0168.
+ * ABI 1.10 stores the HDMI physical address at mailbox 0x0178 so a received
+ * Set Stream Path or Active Source can cold-boot while the CK610 is stopped.
  */
 #define GX_LPC_MB_UPDATE	0x01
 
@@ -13,7 +25,7 @@
 #define GX_LPC_STATUS_READY	0xa5
 
 #define GX_LPC_ABI_MAJOR	1
-#define GX_LPC_ABI_MINOR	7
+#define GX_LPC_ABI_MINOR	10
 
 #define GX_LPC_CAP_DISPLAY	0x01
 #define GX_LPC_CAP_BRIGHTNESS	0x02
@@ -72,7 +84,13 @@
 /* LXDVB501 front-panel aliases established by a one-at-a-time live probe. */
 #define GX_LPC_AUX_UNUSED	GX_LPC_AUX0
 #define GX_LPC_AUX_CLOCK_COLON	GX_LPC_AUX1
+#if defined(GX6706_LPC)
+/* UUVision panel: power and status lamps are swapped versus the GX6702. */
+#define GX_LPC_AUX_STATUS_GREEN	GX_LPC_AUX3
+#define GX_LPC_AUX_POWER	GX_LPC_AUX2
+#else
 #define GX_LPC_AUX_STATUS_GREEN	GX_LPC_AUX2
 #define GX_LPC_AUX_POWER	GX_LPC_AUX3
+#endif
 
 #endif

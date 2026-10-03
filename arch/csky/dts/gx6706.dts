@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: GPL-2.0+
+/*
+ * NationalChip GX6706 (Cygnus), C-SKY CK610.
+ *
+ * Peripheral bases use the uncached alias (+0xA0000000) that the open IPL
+ * MMU maps. EHCI owns high-speed traffic. The two OHCI companions own
+ * full/low-speed traffic and share the one Cygnus PHY sequence.
+ */
+
+/dts-v1/;
+
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	model = "NationalChip GX6706 (Cygnus)";
+	compatible = "nationalchip,gx6706";
+
+	aliases {
+		serial0 = &uart0;
+		spi0 = &spi0;
+		watchdog0 = &watchdog0;
+		usb0 = &usb_ehci;
+		usb1 = &usb_ohci0;
+		usb2 = &usb_ohci1;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	sysinfo {
+		compatible = "nationalchip,gx6706-sysinfo";
+	};
+
+	clocks {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		uart_clk: uart-clk {
+			compatible = "fixed-clock";
+			#clock-cells = <0>;
+			clock-frequency = <29491200>;
+		};
+	};
+
+	soc {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+		bootph-all;
+
+		uart0: serial@a0402000 {
+			compatible = "ns16550a";
+			reg = <0xa0402000 0x1000>;
+			reg-shift = <2>;
+			reg-io-width = <4>;
+			clock-frequency = <29491200>;
+			bootph-all;
+		};
+
+		/*
+		 * Free-running SoC timer. The Cygnus loader touches the
+		 * clock-source half at +0x40, same block as GX6702.
+		 */
+		timer0: timer@a020a000 {
+			compatible = "nationalchip,gx6706-timer",
+				     "csky,gx6605s-timer";
+			reg = <0xa020a000 0x60>;
+			clock-frequency = <27000000>;
+			status = "okay";
+		};
+
+		/*
+		 * Same 27 MHz watchdog block as GX6702. The vendor loader's
+		 * divider literal is 27000000.
+		 */
+		watchdog0: watchdog@a020b000 {
+			compatible = "nationalchip,gx6706-wdt";
+			reg = <0xa020b000 0x10>;
+			clock-frequency = <27000000>;
+			status = "okay";
+		};
+
+		spi0: spi@a0e00000 {
+			compatible = "nationalchip,gx6706-spi";
+			reg = <0xa0e00000 0x100>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "okay";
+
+			flash@0 {
+				compatible = "jedec,spi-nor";
+				reg = <0>;
+				spi-max-frequency = <24000000>;
+			};
+		};
+
+		usb_ehci: usb@a0904000 {
+			compatible = "generic-ehci";
+			reg = <0xa0904000 0x400>;
+			u-boot,board-init;
+			status = "okay";
+		};
+
+		usb_ohci0: usb@a0900000 {
+			compatible = "generic-ohci";
+			reg = <0xa0900000 0x400>;
+			u-boot,board-init;
+			status = "okay";
+		};
+
+		usb_ohci1: usb@a0901000 {
+			compatible = "generic-ohci";
+			reg = <0xa0901000 0x400>;
+			u-boot,board-init;
+			status = "okay";
+		};
+
+		/*
+		 * Same display blocks the GX6706 eCos image uses: graphics and
+		 * the primary DVE at 0xA4800000, CVBS clone at 0xA4900000, and
+		 * the DesignWare HDMI TX at 0xA4F00000.  Mode 0 follows EDID.
+		 */
+		video0: video@a4800000 {
+			compatible = "nationalchip,gx6706-video";
+			reg = <0xa4800000 0x8000>,
+			      <0xa4900000 0x8000>,
+			      <0xa4f00000 0x40000>;
+			reg-names = "gfx", "vp", "hdmi";
+			nationalchip,video-mode = <0>;
+			bootph-all;
+			status = "okay";
+		};
+	};
+};

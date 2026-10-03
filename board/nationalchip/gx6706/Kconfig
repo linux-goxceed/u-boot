@@ -1,0 +1,12 @@
+if TARGET_GX6706
+
+config SYS_BOARD
+	default "gx6706"
+
+config SYS_VENDOR
+	default "nationalchip"
+
+config SYS_CONFIG_NAME
+	default "gx6706"
+
+endif

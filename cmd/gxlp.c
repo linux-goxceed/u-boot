@@ -104,7 +104,7 @@ static int do_gxlp_start(int argc, char *const argv[])
 	const char *text = argc ? argv[0] : "boot";
 
 	return gx_lpc8051_start(gxopen_fw, gxopen_fw_end - gxopen_fw,
-				"embedded open gx6702-lpc.bin", text) ?
+				"embedded open lpc firmware", text) ?
 		CMD_RET_FAILURE : CMD_RET_SUCCESS;
 }
 
@@ -145,6 +145,35 @@ static int do_gxlp_diag(int argc, char *const argv[])
 	return CMD_RET_USAGE;
 }
 
+static int do_gxlp_wake(int argc, char *const argv[])
+{
+	char *end;
+	ulong value;
+
+	if (gx_lpc_ensure_open("boot"))
+		return CMD_RET_FAILURE;
+	if (!argc)
+		return gx_lpc8051_wake_show() ? CMD_RET_FAILURE : CMD_RET_SUCCESS;
+	if (!strcmp(argv[0], "key") && argc >= 2) {
+		value = simple_strtoul(argv[1], &end, 16);
+		if (end == argv[1] || *end || value > 0xff)
+			return CMD_RET_USAGE;
+		return gx_lpc8051_wake_set_key(value) ?
+			CMD_RET_FAILURE : CMD_RET_SUCCESS;
+	}
+	if (!strcmp(argv[0], "ir") && argc >= 2) {
+		if (!strcmp(argv[1], "off"))
+			return gx_lpc8051_wake_clear_ir() ?
+				CMD_RET_FAILURE : CMD_RET_SUCCESS;
+		value = simple_strtoul(argv[1], &end, 16);
+		if (end == argv[1] || *end || value > 0xffff)
+			return CMD_RET_USAGE;
+		return gx_lpc8051_wake_add_ir(value) ?
+			CMD_RET_FAILURE : CMD_RET_SUCCESS;
+	}
+	return CMD_RET_USAGE;
+}
+
 static int do_gxlp(struct cmd_tbl *cmdtp, int flag, int argc,
 		   char *const argv[])
 {
@@ -162,6 +191,8 @@ static int do_gxlp(struct cmd_tbl *cmdtp, int flag, int argc,
 		return do_gxlp_alarm(argc, argv);
 	if (!strcmp(sub, "sleep"))
 		return do_gxlp_sleep(argc, argv);
+	if (!strcmp(sub, "wake"))
+		return do_gxlp_wake(argc, argv);
 	if (!strcmp(sub, "keys")) {
 		if (gx_lpc_ensure_open("boot"))
 			return CMD_RET_FAILURE;
@@ -186,6 +217,12 @@ U_BOOT_CMD(gxlp, 6, 0, do_gxlp,
 	   "rtc [HH:MM[:SS]]\n"
 	   "gxlp alarm <HH:MM[:SS]|off>\n"
 	   "gxlp sleep button [0xNN]\n"
+	   "    cecmode 1 (gxcec on): standby posts System Standby, power key posts Image View On\n"
+	   "    cecmode 1 or 2 also cold-boots on Set Stream Path / Active Source for this HDMI\n"
+	   "    address, or on a directed Image View On / Text View On\n"
+	   "gxlp wake\n"
+	   "gxlp wake key <hex>       panel scan code, 0 restores 0x4f (RAM, this boot)\n"
+	   "gxlp wake ir <hex>|off    extra NEC code, shared IR stays enabled\n"
 	   "gxlp sleep until <HH:MM[:SS]>\n"
 	   "gxlp sleep for <5..86400>\n"
 	   "gxlp sleep after <5..86400>\n"

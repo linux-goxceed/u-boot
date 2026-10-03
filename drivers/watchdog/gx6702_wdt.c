@@ -129,6 +129,7 @@ static const struct wdt_ops gx6702_wdt_ops = {
 
 static const struct udevice_id gx6702_wdt_ids[] = {
 	{ .compatible = "nationalchip,gx6702-wdt" },
+	{ .compatible = "nationalchip,gx6706-wdt" },
 	{ }
 };
 

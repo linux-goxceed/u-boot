@@ -8,7 +8,7 @@
 #define GX_LPC_SHARED		0xA4D00000UL
 #define GX_LPC_STATUS_READY	0xa5
 #define GX_LPC_ABI_MAJOR	1
-#define GX_LPC_ABI_MINOR	7
+#define GX_LPC_ABI_MINOR	10
 #define GX_LPC_CAP_DISPLAY	BIT(0)
 #define GX_LPC_CAP_BRIGHTNESS	BIT(1)
 #define GX_LPC_CAP_AUX		BIT(2)
@@ -18,8 +18,14 @@
 #define GX_LPC_CAP_SUSPEND	BIT(6)
 #define GX_LPC_AUX_MAX		0x0f
 #define GX_LPC_AUX_CLOCK_COLON	BIT(1)
+#if defined(CONFIG_TARGET_GX6706)
+/* UUVision panel: power and status lamps are swapped versus the GX6702. */
+#define GX_LPC_AUX_STATUS_GREEN	BIT(3)
+#define GX_LPC_AUX_POWER	BIT(2)
+#else
 #define GX_LPC_AUX_STATUS_GREEN	BIT(2)
 #define GX_LPC_AUX_POWER	BIT(3)
+#endif
 #define GX_LPC_SCROLL_MAX	32
 #define GX_LPC_SCROLL_ENABLE	BIT(0)
 #define GX_LPC_SCROLL_PERIOD	4
@@ -70,6 +76,12 @@ int gx_lpc8051_set_rtc(u8 hour, u8 minute, u8 second);
 int gx_lpc8051_set_rtc_display(bool enable);
 int gx_lpc8051_set_alarm(u8 hour, u8 minute, u8 second);
 int gx_lpc8051_cancel_alarm(void);
+void gx_lpc8051_set_cecmode(u8 mode);
+int gx_lpc8051_cec_post(u8 opcode);
+int gx_lpc8051_wake_show(void);
+int gx_lpc8051_wake_set_key(u8 key);
+int gx_lpc8051_wake_add_ir(u16 code);
+int gx_lpc8051_wake_clear_ir(void);
 
 int gx_lpc8051_suspend_soft(u32 wake_seconds, bool arm_alarm,
 			    u8 alarm_hour, u8 alarm_minute, u8 alarm_second);

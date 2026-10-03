@@ -422,7 +422,9 @@ static void gx6702_display_reset(void)
 	gx6702_rmw(GX6702_CRG_BASE + CRG_RESET0, CRG_RESET0_DVE, 0);
 	mdelay(2);
 
-	writel(DVE_SOFT_RESET_MAGIC, GX6702_DVE_BASE + DVE_SOFT_RESET);
+	writel(DVE_SOFT_RESET_MAGIC,
+	       (IS_ENABLED(CONFIG_TARGET_GX6706) ? GX6706_DVE_BASE :
+		GX6702_DVE_BASE) + DVE_SOFT_RESET);
 	mdelay(2);
 }
 
@@ -456,8 +458,13 @@ static void gx6702_pixclk_set(const struct gx6702_video_mode_info *mode)
 		sel = CRG_PIXCLK_SEL_HD;
 	}
 
-	gx6702_rmw(GX6702_GFX_BASE + GFX_PIXCLK, GFX_PIXCLK_DIV_MASK,
-		   div << GFX_PIXCLK_DIV_SHIFT);
+	/*
+	 * GFX+0xF4 stays zero on a working GX6706 logo, so the pixel clock is
+	 * the CRG selector below.  Gemini still programs the GFX divider.
+	 */
+	if (!IS_ENABLED(CONFIG_TARGET_GX6706))
+		gx6702_rmw(GX6702_GFX_BASE + GFX_PIXCLK, GFX_PIXCLK_DIV_MASK,
+			   div << GFX_PIXCLK_DIV_SHIFT);
 
 	/* Gate the display pixel path, switch source, pulse, then restore. */
 	gate0 = readl(GX6702_CRG_BASE + CRG_CLK_GATE0);
@@ -467,6 +474,9 @@ static void gx6702_pixclk_set(const struct gx6702_video_mode_info *mode)
 	clk &= ~CRG_PIXCLK_SD_PROG_EXTRA_MASK;
 	if (rate <= 27000000)
 		clk |= CRG_PIXCLK_SD_EXTRA_VAL;
+	else if (IS_ENABLED(CONFIG_TARGET_GX6706))
+		/* Live 1080i50 logo: 0xCA8EB247, Gemini HD value plus 0x00021000. */
+		clk |= CRG_PIXCLK_SD_EXTRA_VAL | CRG_PIXCLK_NONPROG_EXTRA_VAL;
 	else
 		clk |= CRG_PIXCLK_NONPROG_EXTRA_VAL;
 	clk &= ~CRG_PIXCLK_SEL_BIT7;
@@ -499,8 +509,9 @@ static void gx6702_pixclk_set(const struct gx6702_video_mode_info *mode)
 	writel(gate1, GX6702_CRG_BASE + CRG_CLK_GATE1);
 	writel(gate1 | CRG_CLK_GATE1_BIT6, GX6702_CRG_BASE + CRG_CLK_GATE1);
 
-	log_info("gx6702-video: pixclk div=0x%02x sel=0x%02x reg=%08x\n",
-		 div, sel, readl(GX6702_GFX_BASE + GFX_PIXCLK));
+	log_debug("gx6702-video: pixclk div=0x%02x sel=0x%02x reg=%08x crg=%08x\n",
+		  div, sel, readl(GX6702_GFX_BASE + GFX_PIXCLK),
+		  readl(GX6702_CRG_BASE + CRG_PIXCLK_SEL));
 }
 
 /*
@@ -512,9 +523,19 @@ static void gx6702_clock_route1_stock(void)
 {
 	u32 addr = 0xA0601000;
 	u32 value = 0x05555555;
+	u32 apply = value | BIT(30) | BIT(31);
+	u32 cur = readl(addr);
+
+	/*
+	 * Publishing BIT(30) with BIT(31) clear decommits a live divider.
+	 * On GX6706 that store does not return when the route is already
+	 * committed, so leave a matching route alone.
+	 */
+	if ((cur & 0xbfffffff) == (apply & 0xbfffffff))
+		return;
 
 	writel(value | BIT(30), addr);
-	writel(value | BIT(30) | BIT(31), addr);
+	writel(apply, addr);
 }
 
 static unsigned int gx6702_mode_index(const struct gx6702_video_mode_info *mode)
@@ -558,8 +579,15 @@ static void gx6702_analogue_init(void)
 	 * The later videoout path changes DAC_CFG to 8, after DVE reset and mode
 	 * programming.  Omitting this early phase leaves PAL sync but no burst.
 	 */
-	gx6702_rmw(GX6702_CRG_BASE + CRG_DVE_CLK_CFG,
-		   CRG_DVE_CLK_CFG_CLEAR, CRG_DVE_CLK_CFG_ENABLE);
+	/*
+	 * 0xA030A1F0 is the DVE clock on Gemini.  On the GX6706 logo it stays
+	 * zero; setting bit 1 here selects a different route.
+	 */
+	if (!IS_ENABLED(CONFIG_TARGET_GX6706))
+		gx6702_rmw(GX6702_CRG_BASE + CRG_DVE_CLK_CFG,
+			   CRG_DVE_CLK_CFG_CLEAR, CRG_DVE_CLK_CFG_ENABLE);
+	else
+		writel(0, GX6702_CRG_BASE + CRG_DVE_CLK_CFG);
 	writel(1, GX6702_GFX_BASE + GFX_DAC_CFG);
 }
 
@@ -631,6 +659,80 @@ static void gx6702_layer_setup(struct gx6702_video_priv *priv, u32 xsize,
 	gx6702_rmw(GX6702_GFX_BASE + GFX_L0_STRIDE, 0,
 		   GFX_L0_STRIDE_UNSCALED | GFX_L0_STRIDE_EN);
 	gx6702_rmw(GX6702_GFX_BASE + GFX_L0_CTRL, 0, GFX_L0_CTRL_EN);
+}
+
+/* GxLoader file 0x1ac1c, copied to both filter banks by file 0x8ae6. */
+static const u32 gx6706_scaler_taps[] = {
+	0x10909010, 0x00ff0100, 0x01ff0200, 0x02ff0300,
+	0x03ff0400, 0x04ff0500, 0x05fe0700, 0x06fe0800,
+	0x07fd0a00, 0x07fc0b00, 0x08fc0c00, 0x09fb0e00,
+	0x09fa1001, 0x0af91201, 0x0bf81401, 0x0bf71501,
+	0x0cf61701, 0x0cf51801, 0x0df41b02, 0x0df31c02,
+	0x0ef11f02, 0x0ef02002, 0x0fef2303, 0x0fed2503,
+	0x10ec2703, 0x10ea2903, 0x10e92b04, 0x10e72d04,
+	0x11e53004, 0x11e33305, 0x11e13505, 0x11df3705,
+	0x12de3a06, 0x12dc3c06, 0x12da3e06, 0x12d74106,
+	0x12d54407, 0x12d34607, 0x12d14807, 0x12cf4b08,
+	0x12cd4d08, 0x12ca5008, 0x12c85309, 0x12c65509,
+	0x12c35809, 0x12c15b0a, 0x12bf5d0a, 0x12bc600a,
+	0x12ba630b, 0x12b7660b, 0x12b5680b, 0x12b26b0b,
+	0x12b06e0c, 0x12ad710c, 0x12aa750d, 0x11a8760d,
+	0x11a5790d, 0x11a27d0e, 0x11a07f0e, 0x119d820e,
+	0x109a840e, 0x1098870f, 0x10958a0f, 0x10928d0f,
+};
+
+static void gx6706_layer_quiesce(void)
+{
+	ulong base = GX6706_GFX_L0_BASE;
+	u32 ctrl = readl(base + GX6706_L0_CTRL);
+
+	writel(ctrl & ~BIT(0), base + GX6706_L0_CTRL);
+	/*
+	 * Leave the old clock running while the disable reaches scanout.
+	 * Two 50 Hz fields cover both field buffers before changing clocks
+	 * or resetting the DVE.  A live mode switch otherwise resets an
+	 * active fetch, even though the final register dump looks correct.
+	 */
+	if (ctrl & BIT(0))
+		mdelay(40);
+	gx6702_rmw(base + GX6706_L0_STRIDE, BIT(31), 0);
+}
+
+static void gx6706_layer_setup(struct gx6702_video_priv *priv, u32 xsize,
+			       u32 ysize, bool interlaced)
+{
+	ulong base = GX6706_GFX_L0_BASE;
+	ulong bus = gx6702_bus_addr(priv->hw_fb);
+	u32 i, stride;
+
+	gx6702_rmw(base + GX6706_L0_CTRL, BIT(0), 0);
+	gx6702_rmw(base + GX6706_L0_STRIDE, BIT(31), 0);
+	gx6702_rmw(base + GX6706_L0_SCALE_CTRL, BIT(2) | BIT(3), 0);
+	writel(0, base + GX6706_L0_VPHASE);
+	writel(0, base + GX6706_L0_DST_POS);
+	writel((ysize << 16) | xsize, base + GX6706_L0_SRC_SIZE);
+	writel((ysize << 16) | xsize, base + GX6706_L0_DST_SIZE);
+	writel((GFX_SCALE_UNITY << 16) | GFX_SCALE_UNITY,
+	       base + GX6706_L0_SCALE);
+	writel(GFX_L0_FILTER_BYPASS, base + GX6706_L0_HFILTER);
+	writel(GFX_L0_FILTER_BYPASS, base + GX6706_L0_VFILTER);
+	for (i = 0; i < ARRAY_SIZE(gx6706_scaler_taps); i++) {
+		writel(gx6706_scaler_taps[i], base + GX6706_L0_HTAPS + i * 4);
+		writel(gx6706_scaler_taps[i], base + GX6706_L0_VTAPS + i * 4);
+	}
+	writel(bus, base + GX6706_L0_FB_TOP);
+	writel(bus + priv->hw_line_length, base + GX6706_L0_FB_BOTTOM);
+	/* Vendor UYVY format: clear bits [26:24], keep the other fields. */
+	gx6702_rmw(base + GX6706_L0_FORMAT, GENMASK(26, 24), 0);
+	stride = (xsize & GFX_L0_STRIDE_MASK) |
+		 ((xsize >> 5) << GFX_L0_STRIDE_PITCH_SHIFT);
+	if (!interlaced)
+		stride |= GX6706_L0_PROGRESSIVE;
+	gx6702_rmw(base + GX6706_L0_STRIDE,
+		   GFX_L0_STRIDE_MASK | GFX_L0_STRIDE_PITCH_CLEAR |
+		   BIT(29) | BIT(30) | BIT(31), stride);
+	gx6702_rmw(base + GX6706_L0_CTRL, 0, BIT(0));
+	gx6702_rmw(base + GX6706_L0_STRIDE, 0, BIT(31));
 }
 
 static void gx6702_svpu_commit(void)
@@ -953,6 +1055,156 @@ static bool gx6702_video_dt_cvbs_requested(struct udevice *dev)
 	return !dev_read_bool(dev, "nationalchip,ypbpr-only");
 }
 
+void gx6706_timer_check(void);
+
+/* Pack a value into bits [26:16] and [10:0], leaving 0xF8000000 alone. */
+static void gx6706_pack_11(ulong reg, u32 hi, u32 lo)
+{
+	u32 v = readl(reg) & 0xf800ffff;
+
+	v = (v & ~0x7ff) | (lo & 0x7ff);
+	v = (v & ~0x07ff0000) | ((hi & 0x7ff) << 16);
+	writel(v, reg);
+}
+
+/*
+ * GxLoader mode-6 path at file 0x858c.  This is the primary DVE mode,
+ * not a PHY reference-clock register.  Preserve its DAC trim [29:25].
+ * The working 1080i50 logo leaves the mode code at 0x26.
+ */
+static void gx6706_dve_set_mode(const struct gx6702_video_mode_info *mode)
+{
+	u32 v, trim = readl(GX6706_DVE_BASE) & DVE_MODE_TRIM_MASK;
+
+	writel(mode->dve_code, GX6706_DVE_BASE);
+	v = readl(GX6706_DVE_BASE) & ~DVE_MODE_SYNC_MASK;
+	v |= DVE_MODE_SYNC_VAL | trim | DVE_MODE_EN;
+	writel(v, GX6706_DVE_BASE);
+}
+
+/* GxLoader file 0xac8c.  Do not delay until the timer is re-armed. */
+static void gx6706_vpu_clock_commit(void)
+{
+	u32 v = readl(0xa4806030) & ~BIT(31);
+
+	writel(v | BIT(31), 0xa4806030);
+}
+
+/*
+ * GX6706 logo path after the CRG pixel-clock select (BOOT.bin +0x8662).
+ * The SVPU at 0xA4806000/0xA4807000 and DVE at 0xA4808000 have a different
+ * layout from Gemini.  Program those blocks before enabling the video plane.
+ */
+static void gx6706_output_setup(const struct gx6702_video_mode_info *mode)
+{
+	u32 v, timer_count;
+
+	gx6706_dve_set_mode(mode);
+	/* Working logo: CRG+0xe0 bit 0 set, 0xA4809000 left at 0xc0000000. */
+	gx6702_rmw(0xa030a0e0, 0, BIT(0));
+	/*
+	 * GxLoader clears bit 30 of 0xA4809000 before the VPU program.
+	 * Once bit 31 is set that store does not return, same as a clock
+	 * route that is already committed.  The logo leaves both bits set.
+	 */
+	v = readl(0xa4809000);
+	if (!(v & BIT(31)))
+		writel(v & ~BIT(30), 0xa4809000);
+	gx6702_rmw(0xa480902c, 0, 0xe0000000);
+
+	gx6702_display_reset();
+
+	gx6702_rmw(0xa4800010, BIT(0), 0);
+	gx6702_rmw(0xa4800048, 0, BIT(3));
+	writel(0x412, 0xa4800050);
+
+	v = readl(0xa4807088) & 0xffff8fff;
+	writel(v, 0xa4807088);
+	gx6702_rmw(0xa4807070, 0, BIT(24));
+
+	gx6702_rmw(0xa4806030, BIT(31), 0);
+	gx6702_rmw(0xa4806028, 0, BIT(0));
+	gx6702_rmw(0xa4806028, BIT(0), 0);
+	gx6702_rmw(0xa4807068, BIT(0), 0);
+	gx6702_rmw(0xa4807070, BIT(0) | BIT(1), 0);
+
+	gx6702_rmw(0xa4807070, BIT(4), 0);
+	gx6702_rmw(0xa4807084, BIT(31), 0);
+	gx6702_rmw(0xa4807070, 0, BIT(24));
+	gx6702_rmw(0xa480708c, BIT(30) | BIT(31), 0);
+
+	/* Bitfield at [7:3]: set bits 0 and 3 of that field, then bit 16. */
+	v = readl(0xa480706c);
+	v |= BIT(3) | BIT(6);
+	v &= ~BIT(17);
+	v |= BIT(16);
+	writel(v, 0xa480706c);
+
+	gx6702_rmw(0xa4807090, 0, BIT(0));
+	gx6702_rmw(0xa4807090, BIT(0), 0);
+
+	writel(0x13cdb400, 0xa4807000);
+	writel(0x13cdb9a0, 0xa4807004);
+	writel(0, 0xa4807008);
+	writel(0, 0xa480700c);
+	writel(0, 0xa4807010);
+	writel(0, 0xa4807014);
+	writel(0x13cdb400, 0xa4807018);
+	writel(0x13cdb9a0, 0xa480701c);
+	writel(0, 0xa4807020);
+	writel(0, 0xa4807024);
+	writel(0, 0xa4807028);
+	writel(0, 0xa480702c);
+	writel(0x13cdb400, 0xa4807030);
+	writel(0x13cdb9a0, 0xa4807034);
+	writel(0, 0xa4807038);
+	writel(0, 0xa480703c);
+	writel(0, 0xa4807040);
+	writel(0, 0xa4807044);
+	writel(0x13cdb400, 0xa4807048);
+	writel(0x13cdb9a0, 0xa480704c);
+	writel(0, 0xa4807050);
+	writel(0, 0xa4807054);
+	writel(0, 0xa4807058);
+	writel(0, 0xa480705c);
+	gx6702_rmw(0xa4807074, 0x7ff, 0x2d0);
+
+	gx6702_rmw(0xa4800010, BIT(4), BIT(4));
+
+	gx6706_pack_11(0xa4806038, 0, 0x240);
+	gx6706_pack_11(0xa480603c, 0, 0x2d0);
+
+	gx6702_rmw(0xa4807090, 0, BIT(0));
+	gx6702_rmw(0xa4807090, BIT(0), 0);
+
+	timer_count = readl(0xa020a044);
+	gx6706_vpu_clock_commit();
+
+	/*
+	 * The VPU clock store stops the free-running counter.  Re-arm it
+	 * before any udelay(), including the HDMI PHY lock wait.  Retain the
+	 * count so timer_conv_64() does not mistake the restart for a wrap.
+	 */
+	if (IS_ENABLED(CONFIG_TARGET_GX6706)) {
+		writel(0, 0xa020a064);
+		writel(timer_count, 0xa020a068);
+		writel(BIT(0), 0xa020a050);
+		writel(BIT(0), 0xa020a060);
+		writel(BIT(1), 0xa020a050);
+		gx6706_timer_check();
+	}
+
+	gx6702_rmw(0xa030a174, 0, BIT(6) | BIT(7));
+
+	/* GxLoader global output routing, separate from the video plane. */
+	gx6702_rmw(0xa4800040, 0, BIT(2) | BIT(3));
+	writel(0x00108080, 0xa4800054);
+	writel(1, 0xa4800060);
+	writel(0x00108080, 0xa4800064);
+
+	gx6706_dve_set_mode(mode);
+}
+
 static void gx6702_video_program_analogue(struct gx6702_video_priv *priv,
 					  const struct gx6702_video_mode_info *mode)
 {
@@ -961,6 +1213,16 @@ static void gx6702_video_program_analogue(struct gx6702_video_priv *priv,
 	u32 ysize = gx6702_mode_frame_h(mode);
 	u32 dac_enable = priv->cvbs_active ? GFX_DAC_ENABLE_ALL :
 		GFX_DAC_ENABLE_YPBPR;
+
+	if (IS_ENABLED(CONFIG_TARGET_GX6706)) {
+		/* Gemini's DVE/layer writes target other blocks on Cygnus. */
+		gx6706_layer_quiesce();
+		gx6702_pixclk_set(mode);
+		gx6702_clock_route1_stock();
+		gx6706_output_setup(mode);
+		gx6706_layer_setup(priv, xsize, ysize, interlaced);
+		return;
+	}
 
 	/*
 	 * Stock order in FUN_931715bc / 7165c: program DVE mode, then CRG
@@ -1169,6 +1431,26 @@ static int gx6702_jpeg_wait(u32 *status_out)
  */
 static void gx6702_jpeg_reset(void)
 {
+	if (IS_ENABLED(CONFIG_TARGET_GX6706)) {
+		/*
+		 * Cygnus eCos file +0xbb586 resets JPEG module 25 through
+		 * +0xa5e5c (cold) and +0xa5f1c (hot). Both use bit 2 in
+		 * write-one set/clear pairs; +0x1d0 is Gemini's interface.
+		 */
+		writel(CRG_COLD_RESET_JPEG,
+		       GX6702_CRG_BASE + CRG_COLD_RESET_SET);
+		udelay(1000);
+		writel(CRG_COLD_RESET_JPEG,
+		       GX6702_CRG_BASE + CRG_COLD_RESET_CLEAR);
+		udelay(1000);
+		writel(CRG_HOT_RESET_JPEG,
+		       GX6702_CRG_BASE + GX6706_CRG_HOT_RESET_SET);
+		writel(CRG_HOT_RESET_JPEG,
+		       GX6702_CRG_BASE + GX6706_CRG_HOT_RESET_CLEAR);
+		sync();
+		return;
+	}
+
 	gx6702_rmw(GX6702_CRG_BASE + CRG_COLD_RESET_SET, 0,
 		   CRG_COLD_RESET_JPEG);
 	udelay(1000);
@@ -1629,6 +1911,7 @@ int gx6702_video_set_mode(unsigned int index, bool force)
 
 static const struct udevice_id gx6702_video_ids[] = {
 	{ .compatible = "nationalchip,gx6702-video" },
+	{ .compatible = "nationalchip,gx6706-video" },
 	{ }
 };
 

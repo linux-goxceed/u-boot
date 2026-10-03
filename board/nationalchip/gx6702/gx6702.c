@@ -2,6 +2,7 @@
 
 #include <init.h>
 #include <env.h>
+#include <gx_sysinfo.h>
 #include <spi_flash.h>
 #include <sysinfo.h>
 #include <usb.h>
@@ -48,8 +49,7 @@ int board_late_init(void)
 	struct spi_flash *flash;
 
 	gx6702_set_identification_env();
-
-	printf("Board: NationalChip GX6702 (Gemini 6702H5)\n");
+	gx_sysinfo_print_board();
 	printf("SPI HW ID: %08x %08x %08x (cfg=%08x)\n",
 	       readl(0xA0F80050), readl(0xA0F80054), readl(0xA0F80058),
 	       readl(0xA0F80044));

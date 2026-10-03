@@ -246,6 +246,63 @@ config SPI_FLASH_ZBIT
 	help
 	  Add support for Zbit Semiconductor Inc. SPI flash chips (ZB25xxx).
 
+config SPI_FLASH_BOYA
+	bool "Boya SPI flash support"
+	help
+	  Add support for Boya Microelectronics SPI flash chips (BY25xxx).
+
+config SPI_FLASH_ESMT
+	bool "ESMT SPI flash support"
+	help
+	  Add support for Elite Semiconductor Memory Technology SPI flash
+	  chips (F25Lxxx).
+
+config SPI_FLASH_FIDELIX
+	bool "Fidelix SPI flash support"
+	help
+	  Add support for Fidelix SPI flash chips (FM25Qxxx).
+
+config SPI_FLASH_FMD
+	bool "Fremont Micro Devices SPI flash support"
+	help
+	  Add support for Fremont Micro Devices SPI flash chips (F25SQAxxx).
+
+config SPI_FLASH_FUDAN
+	bool "Fudan Microelectronics SPI flash support"
+	help
+	  Add support for Fudan Microelectronics SPI flash chips (FM25xxx
+	  and FS25xxx).
+
+config SPI_FLASH_GIANTEC
+	bool "Giantec SPI flash support"
+	help
+	  Add support for Giantec Semiconductor SPI flash chips (GT25xxx).
+
+config SPI_FLASH_PARAGON
+	bool "Paragon SPI flash support"
+	help
+	  Add support for Paragon Technology SPI flash chips (PN25xxx).
+
+config SPI_FLASH_PMC
+	bool "PMC SPI flash support"
+	help
+	  Add support for PMC SPI flash chips (PM25xxx).
+
+config SPI_FLASH_SIXIN
+	bool "Sixin SPI flash support"
+	help
+	  Add support for Sixin SPI flash chips (SX25xxx).
+
+config SPI_FLASH_UCUNDATA
+	bool "UCUNDATA SPI flash support"
+	help
+	  Add support for UCUNDATA SPI flash chips (UC25xxx).
+
+config SPI_FLASH_ZETTA
+	bool "Zetta SPI flash support"
+	help
+	  Add support for Zetta Device SPI flash chips (ZD25xxx).
+
 endif
 
 config SPI_FLASH_USE_4K_SECTORS

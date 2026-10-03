@@ -9,6 +9,8 @@
  */
 
 #include <command.h>
+#include <fdtdec.h>
+#include <dw_hdmi.h>
 #include <edid.h>
 #include <errno.h>
 #include <stdio.h>
@@ -16,7 +18,6 @@
 #include <string.h>
 #include <linux/delay.h>
 #include <asm/io.h>
-#include <fdtdec.h>
 
 #include "gx6702_video.h"
 
@@ -88,6 +89,45 @@ static void dump_hdmi(void)
 	dump_hdmi_regs(0x4000, 0x0010);
 	dump_hdmi_regs(0x4100, 0x0020);
 	dump_hdmi_regs(0x7E00, 0x0030);
+}
+
+static void dump_hdmi_phy(void)
+{
+	u32 reg, i;
+
+	printf("\n-- HDMI analog PHY 0xA0700000 (byte regs at base + reg*4) --\n");
+	printf("0000: %02x\n", readb(GX6706_HDMI_PHY_BASE));
+	printf("0002: %02x\n", readb(GX6706_HDMI_PHY_BASE + (0x02 << 2)));
+	for (reg = 0xa0; reg < 0xd0; reg += 0x10) {
+		put_hex16(reg);
+		putc(':');
+		for (i = 0; i < 0x10; i++) {
+			putc(' ');
+			put_hex8(readb(GX6706_HDMI_PHY_BASE + ((reg + i) << 2)));
+		}
+		putc('\n');
+	}
+	printf("TX PHY_CONF0(3000)=%02x PHY_STAT0(3004)=%02x PHYRSTZ(4005)=%02x\n",
+	       gx6702_hdmi_readb(HDMI_PHY_CONF0),
+	       gx6702_hdmi_readb(HDMI_PHY_STAT0),
+	       gx6702_hdmi_readb(HDMI_MC_PHYRSTZ));
+	printf("TX MC_CLKDIS(4001)=%02x MC_LOCKONCLOCK(4006)=%02x\n",
+	       gx6702_hdmi_readb(HDMI_MC_CLKDIS),
+	       gx6702_hdmi_readb(HDMI_MC_LOCKONCLOCK));
+}
+
+/*
+ * Read-only snapshot of the DesignWare CEC engine.  Keep this separate from
+ * the broad HDMI dump so callers can capture it in normal and standby states
+ * without touching any CEC control, interrupt, or wake registers.
+ */
+static void dump_hdmi_cec(void)
+{
+	printf("\n-- HDMI CEC 0xA4F00000 (byte regs at base + reg*4) --\n");
+	dump_hdmi_regs(0x0106, 0x0001); /* IH CEC interrupt status */
+	dump_hdmi_regs(0x0186, 0x0001); /* IH CEC interrupt mask */
+	dump_hdmi_regs(0x7D00, 0x000A); /* CEC control/status/address/count */
+	dump_hdmi_regs(0x7D10, 0x0022); /* CEC buffers and wake control */
 }
 
 static void print_cea_vics(const u8 *edid, int len)
@@ -347,8 +387,20 @@ static int do_gxvideo(struct cmd_tbl *cmdtp, int flag, int argc,
 		dump_words("DISP0 0xA4800000", GX6702_GFX_BASE, 0x200);
 		dump_words("DISP0 0xA4800400", GX6702_GFX_BASE + 0x400, 0x500);
 		dump_words("DISP0 0xA4804000", GX6702_DVE_BASE, 0x200);
+		if (IS_ENABLED(CONFIG_TARGET_GX6706)) {
+			dump_words("GX6706 UYVY plane 0xA4803000",
+				   GX6706_GFX_L0_BASE, 0x40);
+			dump_words("GX6706 primary DVE 0xA4808000",
+				   GX6706_DVE_BASE, 0x200);
+		}
+		dump_words("VPU 0xA4806000", 0xA4806000, 0x80);
+		dump_words("VPU 0xA4807000", 0xA4807000, 0x280);
+		dump_words("VPU 0xA4808000", 0xA4808000, 0x40);
+		dump_words("VPU 0xA4809000", 0xA4809000, 0x40);
 		dump_hdmi();
-		dump_words("DVE 0xA4400000", 0xA4400000, 0x100);
+		if (IS_ENABLED(CONFIG_TARGET_GX6706))
+			dump_hdmi_phy();
+		dump_words("JPEG decoder 0xA4400000", GX6702_JPEG_BASE, 0x100);
 		dump_words("DISP1 0xA4900000", GX6702_VP_BASE, 0x200);
 		dump_words("DISP1 0xA4900400", GX6702_VP_BASE + 0x400, 0x500);
 		dump_words("DISP1 0xA4904000", GX6702_VP_BASE + 0x4000, 0x200);
@@ -358,9 +410,21 @@ static int do_gxvideo(struct cmd_tbl *cmdtp, int flag, int argc,
 		dump_hdmi();
 		return 0;
 	}
+	if (!strcmp(which, "phy")) {
+		if (!IS_ENABLED(CONFIG_TARGET_GX6706)) {
+			printf("gxvideo: analog PHY dump requires GX6706\n");
+			return CMD_RET_FAILURE;
+		}
+		dump_hdmi_phy();
+		return 0;
+	}
+	if (!strcmp(which, "cec")) {
+		dump_hdmi_cec();
+		return 0;
+	}
 	if (!strcmp(which, "dve")) {
 		dump_words("DISP0 0xA4804000", GX6702_DVE_BASE, 0x200);
-		dump_words("DVE 0xA4400000", 0xA4400000, 0x100);
+		dump_words("JPEG decoder 0xA4400000", GX6702_JPEG_BASE, 0x100);
 		return 0;
 	}
 
@@ -368,8 +432,11 @@ static int do_gxvideo(struct cmd_tbl *cmdtp, int flag, int argc,
 }
 
 U_BOOT_CMD(gxvideo, 5, 1, do_gxvideo,
-	   "GX6702 video / mode / EDID / HPD / hardware JPEG",
-	   "[all|hdmi|dve|edid|hpd]\n"
+	   "GX6702/GX6706 video / mode / EDID / HPD / hardware JPEG",
+		   "[all|hdmi|phy|cec|dve|edid|hpd]\n"
+	   "gxvideo phy                     - read-only GX6706 analog PHY + TX status\n"
+		   "gxvideo cec                     - read-only HDMI CEC register snapshot\n"
+	   "                                - gxcec drives the engine\n"
 	   "gxvideo edid                    - read sink EDID + list CEA VICs\n"
 	   "gxvideo hpd                     - HDMI hotplug status + auto pick\n"
 	   "gxvideo mode                    - list modes 0..10 (+ EDID support)\n"
