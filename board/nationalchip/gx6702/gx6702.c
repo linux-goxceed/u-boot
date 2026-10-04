@@ -9,6 +9,7 @@
 #include <asm/io.h>
 #include <asm/global_data.h>
 #include "gx6702_usb.h"
+#include "gx_eth.h"
 
 DECLARE_GLOBAL_DATA_PTR;
 
@@ -47,6 +48,8 @@ static void gx6702_set_identification_env(void)
 int board_late_init(void)
 {
 	struct spi_flash *flash;
+
+	gx_eth_enable();
 
 	gx6702_set_identification_env();
 	gx_sysinfo_print_board();

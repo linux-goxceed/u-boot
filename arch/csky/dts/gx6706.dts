@@ -17,6 +17,7 @@
 
 	aliases {
 		serial0 = &uart0;
+		ethernet0 = &gmac0;
 		spi0 = &spi0;
 		watchdog0 = &watchdog0;
 		usb0 = &usb_ehci;
@@ -48,6 +49,8 @@
 		#address-cells = <1>;
 		#size-cells = <1>;
 		ranges;
+		/* Cached DRAM 0x90000000 is physical 0x10000000 on the MAC DMA. */
+		dma-ranges = <0x10000000 0x90000000 0x4000000>;
 		bootph-all;
 
 		uart0: serial@a0402000 {
@@ -122,6 +125,28 @@
 		 * the primary DVE at 0xA4800000, CVBS clone at 0xA4900000, and
 		 * the DesignWare HDMI TX at 0xA4F00000.  Mode 0 follows EDID.
 		 */
+		/*
+		 * Same Synopsys GMAC as GX6702, external RTL8201 in RMII.
+		 * The H5 loader first reads the external PHY at address 1.
+		 */
+		gmac0: ethernet@a0a00000 {
+			compatible = "nationalchip,gx6706-dwmac";
+			reg = <0xa0a00000 0x2000>;
+			phy-mode = "rmii";
+			max-speed = <100>;
+			phy-handle = <&ethphy1>;
+			status = "okay";
+
+			mdio {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				ethphy1: ethernet-phy@1 {
+					reg = <1>;
+				};
+			};
+		};
+
 		video0: video@a4800000 {
 			compatible = "nationalchip,gx6706-video";
 			reg = <0xa4800000 0x8000>,

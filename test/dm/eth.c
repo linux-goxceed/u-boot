@@ -189,6 +189,50 @@ static int dm_test_eth(struct unit_test_state *uts)
 }
 DM_TEST(dm_test_eth, UTF_SCAN_FDT);
 
+static int eth_test_start_timeout(struct udevice *dev)
+{
+	return -ETIMEDOUT;
+}
+
+static int dm_test_eth_start_error(struct unit_test_state *uts)
+{
+	struct udevice *dev;
+	const struct driver *original;
+	struct driver driver;
+	struct eth_ops ops;
+	int ret, active, retry;
+
+	net_init();
+	env_set("ethact", "eth@10002000");
+	env_set("ethrotate", "no");
+	eth_set_current();
+	dev = eth_get_dev();
+	ut_assertnonnull(dev);
+	eth_halt();
+
+	/* Inject a start failure after a successful device probe. */
+	original = dev->driver;
+	driver = *original;
+	ops = *eth_get_ops(dev);
+	ops.start = eth_test_start_timeout;
+	driver.ops = &ops;
+	dev->driver = &driver;
+	ret = eth_init();
+	active = eth_is_active(dev);
+	dev->driver = original;
+
+	/* Restore the driver before assertions and verify it can be retried. */
+	retry = eth_init();
+	eth_halt();
+	env_set("ethrotate", NULL);
+	ut_asserteq(-ETIMEDOUT, ret);
+	ut_asserteq(0, active);
+	ut_assertok(retry);
+
+	return 0;
+}
+DM_TEST(dm_test_eth_start_error, UTF_SCAN_FDT);
+
 static int dm_test_eth_alias(struct unit_test_state *uts)
 {
 	char *argv[] = { "ping", "1.1.2.2" };

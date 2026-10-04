@@ -15,6 +15,7 @@
 #include <eth_phy.h>
 #include <log.h>
 #include <miiphy.h>
+#include <phy.h>
 #include <malloc.h>
 #include <net.h>
 #include <pci.h>
@@ -37,27 +38,47 @@
 #include <asm/arch/gmac.h>
 #endif
 
+static u32 dw_mii_clk(struct dw_eth_dev *priv)
+{
+	return priv->mii_clk_set ? priv->mii_clk : MII_CLKRANGE_150_250M;
+}
+
+static int dw_mdio_wait(struct dw_eth_dev *priv)
+{
+	struct eth_mac_regs *mac = priv->mac_regs_p;
+	ulong timeout = priv->mdio_timeout_ms ?: CFG_MDIO_TIMEOUT;
+	ulong start = get_timer(0);
+	ulong polls = timeout * 100 + 1;
+
+	/* Also bound polling when a platform clock change stops the timer. */
+	while (polls--) {
+		if (!(readl(&mac->miiaddr) & MII_BUSY))
+			return 0;
+		if (get_timer(start) >= timeout)
+			break;
+		udelay(10);
+	}
+	return -ETIMEDOUT;
+}
+
 static int dw_mdio_read(struct mii_dev *bus, int addr, int devad, int reg)
 {
 	struct dw_eth_dev *priv = dev_get_priv((struct udevice *)bus->priv);
 	struct eth_mac_regs *mac_p = priv->mac_regs_p;
-	ulong start;
 	u16 miiaddr;
-	int timeout = CFG_MDIO_TIMEOUT;
+	int ret;
+
+	ret = dw_mdio_wait(priv);
+	if (ret)
+		return ret;
 
 	miiaddr = ((addr << MIIADDRSHIFT) & MII_ADDRMSK) |
 		  ((reg << MIIREGSHIFT) & MII_REGMSK);
 
-	writel(miiaddr | MII_CLKRANGE_150_250M | MII_BUSY, &mac_p->miiaddr);
+	writel(miiaddr | dw_mii_clk(priv) | MII_BUSY, &mac_p->miiaddr);
 
-	start = get_timer(0);
-	while (get_timer(start) < timeout) {
-		if (!(readl(&mac_p->miiaddr) & MII_BUSY))
-			return readl(&mac_p->miidata);
-		udelay(10);
-	};
-
-	return -ETIMEDOUT;
+	ret = dw_mdio_wait(priv);
+	return ret ? ret : readl(&mac_p->miidata) & 0xffff;
 }
 
 static int dw_mdio_write(struct mii_dev *bus, int addr, int devad, int reg,
@@ -65,26 +86,20 @@ static int dw_mdio_write(struct mii_dev *bus, int addr, int devad, int reg,
 {
 	struct dw_eth_dev *priv = dev_get_priv((struct udevice *)bus->priv);
 	struct eth_mac_regs *mac_p = priv->mac_regs_p;
-	ulong start;
 	u16 miiaddr;
-	int ret = -ETIMEDOUT, timeout = CFG_MDIO_TIMEOUT;
+	int ret;
+
+	ret = dw_mdio_wait(priv);
+	if (ret)
+		return ret;
 
 	writel(val, &mac_p->miidata);
 	miiaddr = ((addr << MIIADDRSHIFT) & MII_ADDRMSK) |
 		  ((reg << MIIREGSHIFT) & MII_REGMSK) | MII_WRITE;
 
-	writel(miiaddr | MII_CLKRANGE_150_250M | MII_BUSY, &mac_p->miiaddr);
+	writel(miiaddr | dw_mii_clk(priv) | MII_BUSY, &mac_p->miiaddr);
 
-	start = get_timer(0);
-	while (get_timer(start) < timeout) {
-		if (!(readl(&mac_p->miiaddr) & MII_BUSY)) {
-			ret = 0;
-			break;
-		}
-		udelay(10);
-	};
-
-	return ret;
+	return dw_mdio_wait(priv);
 }
 
 #if CONFIG_IS_ENABLED(DM_GPIO)
@@ -470,7 +485,9 @@ static int _dw_write_hwaddr(struct dw_eth_dev *priv, u8 *mac_id)
 static int dw_adjust_link(struct dw_eth_dev *priv, struct eth_mac_regs *mac_p,
 			  struct phy_device *phydev)
 {
-	u32 conf = readl(&mac_p->conf) | FRAMEBURSTENABLE | DISABLERXOWN;
+	u32 conf = readl(&mac_p->conf) & ~(FES_100 | FULLDPLXMODE);
+
+	conf |= FRAMEBURSTENABLE | DISABLERXOWN;
 
 	if (!phydev->link) {
 		printf("%s: No link.\n", phydev->dev->name);
@@ -538,33 +555,47 @@ static void _dw_eth_halt(struct dw_eth_dev *priv)
 	phy_shutdown(priv->phydev);
 }
 
-int designware_eth_init(struct dw_eth_dev *priv, u8 *enetaddr)
+static int dw_dma_reset(struct dw_eth_dev *priv)
 {
 	struct eth_mac_regs *mac_p = priv->mac_regs_p;
 	struct eth_dma_regs *dma_p = priv->dma_regs_p;
 	ulong start;
-	int ret;
-
-	writel(readl(&dma_p->busmode) | DMAMAC_SRST, &dma_p->busmode);
+	unsigned int polls = DIV_ROUND_UP(CFG_MACRESET_TIMEOUT, 10);
 
 	/*
 	 * When a MII PHY is used, we must set the PS bit for the DMA
 	 * reset to succeed.
 	 */
-	if (priv->phydev->interface == PHY_INTERFACE_MODE_MII)
+	if (priv->phydev->interface == PHY_INTERFACE_MODE_MII ||
+	    priv->phydev->interface == PHY_INTERFACE_MODE_RMII)
 		writel(readl(&mac_p->conf) | MII_PORTSELECT, &mac_p->conf);
 	else
 		writel(readl(&mac_p->conf) & ~MII_PORTSELECT, &mac_p->conf);
 
+	writel(readl(&dma_p->busmode) | DMAMAC_SRST, &dma_p->busmode);
 	start = get_timer(0);
 	while (readl(&dma_p->busmode) & DMAMAC_SRST) {
-		if (get_timer(start) >= CFG_MACRESET_TIMEOUT) {
-			printf("DMA reset timeout\n");
+		if (!polls-- || get_timer(start) >= CFG_MACRESET_TIMEOUT) {
+			printf("DMA reset timeout (busmode=%08x)\n",
+			       readl(&dma_p->busmode));
 			return -ETIMEDOUT;
 		}
 
-		mdelay(100);
+		mdelay(10);
 	};
+
+	return 0;
+}
+
+int designware_eth_init(struct dw_eth_dev *priv, u8 *enetaddr)
+{
+	struct eth_mac_regs *mac_p = priv->mac_regs_p;
+	struct eth_dma_regs *dma_p = priv->dma_regs_p;
+	int ret;
+
+	ret = priv->dma_reset ? priv->dma_reset(priv) : dw_dma_reset(priv);
+	if (ret)
+		return ret;
 
 	/*
 	 * Soft reset above clears HW address registers.
@@ -749,6 +780,113 @@ static int _dw_free_pkt(struct dw_eth_dev *priv)
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_TARGET_GX6702)
+/* Legacy GX6702 discovery; GX6706 uses its platform wrapper. */
+static int dw_phy_id_ok(u32 id)
+{
+	if (!id)
+		return 0;
+	if ((id & 0x1fffffff) == 0x1fffffff)
+		return 0;
+	return 1;
+}
+
+/* Bits [29:14] of this CRG word hold the chip ID. */
+#define GX_CHIP_ID_REG	0xa030a184
+
+static int gx_gmac_ver_ok(u32 ver)
+{
+	u32 id = ver & 0xff;
+
+	return ver && ver != 0xffffffff && id >= 0x35 && id <= 0x51;
+}
+
+/*
+ * Legacy GX6702 boards select the MAC using the chip ID and version
+ * register. Try the chip-specific address first, then the other block
+ * if the preferred address does not identify a responding GMAC.
+ */
+static void gx_select_mac(struct udevice *dev, struct dw_eth_dev *priv)
+{
+	struct eth_pdata *pdata = dev_get_plat(dev);
+	u32 chip = (readl(GX_CHIP_ID_REG) >> 14) & 0xffff;
+	phys_addr_t bases[2];
+	u32 vers[2];
+	int i, pick = -1;
+
+	if (chip == 0x6616 || chip == 0x6701 || chip == 0x6705)
+		bases[0] = 0xa0a00000;
+	else
+		bases[0] = 0xa0700000;
+	bases[1] = bases[0] == 0xa0a00000 ? 0xa0700000 : 0xa0a00000;
+
+	for (i = 0; i < 2; i++)
+		vers[i] = readl(bases[i] + 0x20);
+	debug("gmac: chip=%04x %08lx=%08x %08lx=%08x\n", chip,
+	       (unsigned long)bases[0], vers[0],
+	       (unsigned long)bases[1], vers[1]);
+
+	for (i = 0; i < 2; i++) {
+		if (gx_gmac_ver_ok(vers[i])) {
+			pick = i;
+			break;
+		}
+	}
+	if (pick < 0)
+		return;
+
+	pdata->iobase = bases[pick];
+	priv->mac_regs_p = (struct eth_mac_regs *)phys_to_virt(bases[pick]);
+	priv->dma_regs_p = (struct eth_dma_regs *)
+		(phys_to_virt(bases[pick]) + DW_DMA_BASE_OFFSET);
+}
+
+/* GX GMAC CSR clock is not the 150-250 MHz the generic driver assumes. */
+static int dw_gx_find_phy(struct dw_eth_dev *priv, int *addr_out)
+{
+	static const u32 clks[] = {
+		MII_CLKRANGE_35_60M,
+		MII_CLKRANGE_20_35M,
+		MII_CLKRANGE_60_100M,
+		MII_CLKRANGE_100_150M,
+		MII_CLKRANGE_150_250M,
+		MII_CLKRANGE_250_300M,
+	};
+	struct eth_mac_regs *mac = priv->mac_regs_p;
+	u32 ver = readl(&mac->version);
+	int pass, addr;
+
+	if (!ver || ver == 0xffffffff) {
+		printf("gmac: MAC not responding, version=%08x\n", ver);
+		return -ENODEV;
+	}
+
+	/* Select the 10/100 RMII port before GX6702 PHY discovery. */
+	writel(readl(&mac->conf) | MII_PORTSELECT | FES_100, &mac->conf);
+
+
+	for (pass = 0; pass < ARRAY_SIZE(clks); pass++) {
+		priv->mii_clk = clks[pass];
+		priv->mii_clk_set = true;
+		for (addr = 0; addr < 32; addr++) {
+			u32 id = 0;
+
+			if (get_phy_id(priv->bus, addr, MDIO_DEVAD_NONE, &id))
+				continue;
+			if (!dw_phy_id_ok(id))
+				continue;
+			*addr_out = addr;
+			debug("gmac: PHY %d id %08x mdc %02x\n", addr, id,
+			       clks[pass]);
+			return 0;
+		}
+	}
+	printf("gmac: version=%08x conf=%08x gmii=%08x data=%08x, no PHY\n",
+	       ver, readl(&mac->conf), readl(&mac->miiaddr), readl(&mac->miidata));
+	return -ENODEV;
+}
+#endif
+
 static int dw_phy_init(struct dw_eth_dev *priv, void *dev)
 {
 	struct phy_device *phydev;
@@ -771,11 +909,21 @@ static int dw_phy_init(struct dw_eth_dev *priv, void *dev)
 	phy_addr = CONFIG_PHY_ADDR;
 #endif
 
+#if IS_ENABLED(CONFIG_TARGET_GX6702)
+	if (device_is_compatible(dev, "nationalchip,gx-dwmac")) {
+		gx_select_mac(dev, priv);
+		ret = dw_gx_find_phy(priv, &phy_addr);
+		if (ret)
+			return ret;
+	}
+#endif
+
 	phydev = phy_connect(priv->bus, phy_addr, dev, priv->interface);
 	if (!phydev)
 		return -ENODEV;
 #endif
 
+	priv->phydev = phydev;
 	phydev->supported &= PHY_GBIT_FEATURES;
 	if (priv->max_speed) {
 		ret = phy_set_supported(phydev, priv->max_speed);
@@ -784,10 +932,7 @@ static int dw_phy_init(struct dw_eth_dev *priv, void *dev)
 	}
 	phydev->advertising = phydev->supported;
 
-	priv->phydev = phydev;
-	phy_config(phydev);
-
-	return 0;
+	return phy_config(phydev);
 }
 
 static int designware_eth_start(struct udevice *dev)
@@ -866,6 +1011,7 @@ int designware_eth_probe(struct udevice *dev)
 	void *ioaddr;
 	int ret, err;
 	struct reset_ctl_bulk reset_bulk;
+	ulong cr;
 #ifdef CONFIG_CLK
 	int i, clock_nb;
 
@@ -923,6 +1069,12 @@ int designware_eth_probe(struct udevice *dev)
 #endif
 	}
 #endif
+
+	cr = dev_get_driver_data(dev);
+	if (!priv->mii_clk_set) {
+		priv->mii_clk = cr ? cr : MII_CLKRANGE_150_250M;
+		priv->mii_clk_set = true;
+	}
 
 	ret = reset_get_bulk(dev, &reset_bulk);
 	if (ret)
@@ -982,8 +1134,11 @@ int designware_eth_probe(struct udevice *dev)
 
 	/* continue here for cleanup if no PHY found */
 	err = ret;
+	free(priv->phydev);
+	priv->phydev = NULL;
 	mdio_unregister(priv->bus);
 	mdio_free(priv->bus);
+	priv->bus = NULL;
 mdio_err:
 
 #ifdef CONFIG_CLK
@@ -996,7 +1151,7 @@ clk_err:
 	return err;
 }
 
-static int designware_eth_remove(struct udevice *dev)
+int designware_eth_remove(struct udevice *dev)
 {
 	struct dw_eth_dev *priv = dev_get_priv(dev);
 
@@ -1062,6 +1217,8 @@ static const struct udevice_id designware_eth_ids[] = {
 	{ .compatible = "st,stm32-dwmac" },
 	{ .compatible = "snps,arc-dwmac-3.70a" },
 	{ .compatible = "sophgo,cv1800b-dwmac" },
+	/* Legacy GX6702 compatible; GX6706 uses its platform wrapper. */
+	{ .compatible = "nationalchip,gx-dwmac", .data = MII_CLKRANGE_35_60M },
 	{ }
 };
 

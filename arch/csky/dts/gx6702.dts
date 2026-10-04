@@ -16,6 +16,7 @@
 
 	aliases {
 		serial0 = &uart0;
+		ethernet0 = &gmac0;
 		spi0 = &spi0;
 		gpio0 = &gpio0;
 		watchdog0 = &watchdog0;
@@ -48,6 +49,8 @@
 		#address-cells = <1>;
 		#size-cells = <1>;
 		ranges;
+		/* Cached DRAM 0x90000000 is physical 0x10000000 on the MAC DMA. */
+		dma-ranges = <0x10000000 0x90000000 0x4000000>;
 		bootph-all;
 
 		uart0: serial@a0402000 {
@@ -163,6 +166,18 @@
 		 * mode uses NTSC CVBS. Add nationalchip,ypbpr-only to skip the CVBS
 		 * clone and leave its DAC powered down.
 		 */
+		/*
+		 * Synopsys GMAC shared with GX6706. RTL8201 is RMII; the loader
+		 * sets GMII Address CR to the 35-60 MHz divider.
+		 */
+		gmac0: ethernet@a0a00000 {
+			compatible = "nationalchip,gx-dwmac";
+			reg = <0xa0a00000 0x2000>;
+			phy-mode = "rmii";
+			max-speed = <100>;
+			status = "okay";
+		};
+
 		video0: video@a4800000 {
 			compatible = "nationalchip,gx6702-video";
 			reg = <0xa4800000 0x8000>,

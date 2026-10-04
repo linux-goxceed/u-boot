@@ -41,6 +41,10 @@
 	"fdt_addr_r=0x91f00000\0" \
 	"ramdisk_addr_r=0x90c00000\0" \
 	"initrd_high=0xffffffff\0" \
+	"ipaddr=192.168.120.3\0" \
+	"netmask=255.255.255.0\0" \
+	"serverip=192.168.120.100\0" \
+	"ethaddr=02:67:06:00:00:01\0" \
 	"boot_usb=" \
 		"usb start; " \
 		"fatload usb 0:1 ${loadaddr} uImage; " \

@@ -376,6 +376,15 @@ config ETH_DESIGNWARE_MESON8B
 	  This provides glue layer to use Synopsys Designware Ethernet MAC
 	  present on the Amlogic Meson8b, GX, AXG & G12A SoCs.
 
+config ETH_DESIGNWARE_GX6706
+	bool "NationalChip GX6706 DesignWare Ethernet"
+	depends on TARGET_GX6706
+	select ETH_DESIGNWARE
+	select DM_ETH_PHY
+	help
+	  GX6706 platform setup for the DesignWare MAC and its external
+	  Clause 22 PHY. PHY discovery precedes the DMA software reset.
+
 config ETH_DESIGNWARE_SOCFPGA
 	select REGMAP
 	select SYSCON

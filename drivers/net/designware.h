@@ -247,10 +247,17 @@ struct dw_eth_dev {
 	struct udevice *dev;
 	struct phy_device *phydev;
 	struct mii_dev *bus;
+	/* GMII Address CR field. mii_clk_set selects it over the 150-250 default. */
+	u32 mii_clk;
+	bool mii_clk_set;
+	u32 mdio_timeout_ms; /* Zero preserves CFG_MDIO_TIMEOUT. */
+	/* Optional platform DMA/MAC software reset, after PHY discovery. */
+	int (*dma_reset)(struct dw_eth_dev *priv);
 };
 
 int designware_eth_of_to_plat(struct udevice *dev);
 int designware_eth_probe(struct udevice *dev);
+int designware_eth_remove(struct udevice *dev);
 extern const struct eth_ops designware_eth_ops;
 
 struct dw_eth_pdata {

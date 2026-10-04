@@ -34,6 +34,7 @@ obj-$(CONFIG_EEPRO100) += eepro100.o
 obj-$(CONFIG_ESSEDMA) += essedma.o
 obj-$(CONFIG_ETHOC) += ethoc.o
 obj-$(CONFIG_ETH_DESIGNWARE) += designware.o
+obj-$(CONFIG_ETH_DESIGNWARE_GX6706) += dwmac_gx6706.o
 obj-$(CONFIG_ETH_DESIGNWARE_MESON8B) += dwmac_meson8b.o
 obj-$(CONFIG_ETH_DESIGNWARE_S700) += dwmac_s700.o
 obj-$(CONFIG_ETH_DESIGNWARE_SOCFPGA) += dwmac_socfpga.o

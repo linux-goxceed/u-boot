@@ -174,9 +174,7 @@ static int rtl8201f_config(struct phy_device *phydev)
 			  0);
 	}
 
-	genphy_config_aneg(phydev);
-
-	return 0;
+	return genphy_config_aneg(phydev);
 }
 
 static int rtl8211e_config(struct phy_device *phydev)
