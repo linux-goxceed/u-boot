@@ -4,6 +4,7 @@
  */
 
 #include <command.h>
+#include <console.h>
 #include <cpu_func.h>
 #include <errno.h>
 #include <vsprintf.h>
@@ -784,6 +785,259 @@ int gx_lpc8051_cec_post(u8 opcode)
 	return -ETIMEDOUT;
 }
 
+static u8 gx_lpc_announce_seq;
+static u8 gx_lpc_rx_seen;
+static u8 gx_lpc_snap_seen;
+static u8 gx_lpc_line_seen;
+static u8 gx_lpc_pulse_seen;
+
+int gx_lpc8051_cec_announce(u16 pa, int have_pa)
+{
+	void __iomem *flag = (void __iomem *)(GX_LPC_SHARED + 0x1c0);
+	u8 seq = gx_lpc_announce_seq + 1;
+	u32 flags;
+	int i;
+
+	if (!seq)
+		seq = 1;
+	if (!gx_lpc8051_open_ready(GX_LPC_CAP_SUSPEND))
+		return -ENODEV;
+	/*
+	 * Logical address 1 matches the LPC header 0x10.  Bytes 0 and 1 of
+	 * the word at 0x1c0 are the 8051 standby flags and must be kept.
+	 */
+	writel((u32)(have_pa ? 1 : 0) |
+	       ((u32)(pa >> 8) << 8) |
+	       ((u32)(pa & 0xff) << 16) |
+	       (1u << 24),
+	       (void __iomem *)(GX_LPC_SHARED + 0x178));
+	flags = readl(flag);
+	flags = (flags & 0x0000ffffu) | ((u32)seq << 16);
+	writel(flags, flag);
+	gx_lpc_announce_seq = seq;
+	for (i = 0; i < 2000; i++) {
+		if (((readl(flag) >> 24) & 0xff) == seq)
+			return 0;
+		udelay(1000);
+	}
+	return -ETIMEDOUT;
+}
+
+int gx_lpc8051_cec_show_line(void)
+{
+	u8 n;
+
+	if (!gx_lpc8051_open_ready(GX_LPC_CAP_SUSPEND))
+		return 0;
+	n = readl((void __iomem *)(GX_LPC_SHARED + 0x1c4));
+	if (!n || n == gx_lpc_line_seen)
+		return 0;
+	gx_lpc_line_seen = n;
+	printf("gxcec: pin low %u times, last pulse %u ticks\n", n,
+	       readl((void __iomem *)(GX_LPC_SHARED + 0x1d0)) & 0xffff);
+	return 1;
+}
+
+int gx_lpc8051_cec_show_pulse(void)
+{
+	u32 word;
+	u8 seq;
+
+	if (!gx_lpc8051_open_ready(GX_LPC_CAP_SUSPEND))
+		return 0;
+	word = readl((void __iomem *)(GX_LPC_SHARED + 0x1d0));
+	seq = word >> 24;
+	if (!seq || seq == gx_lpc_pulse_seen)
+		return 0;
+	gx_lpc_pulse_seen = seq;
+	printf("gxcec: start low %u ticks, fail %u cells",
+	       word & 0xffff, (word >> 16) & 0xff);
+	{
+		u8 n = (readl((void __iomem *)(GX_LPC_SHARED + 0x1c4)) >> 8) & 0xff;
+		u8 i;
+
+		if (n > 16)
+			n = 16;
+		for (i = 0; i < n; i++) {
+			u32 off = 0x1d4 + i;
+			u32 data = readl((void __iomem *)(GX_LPC_SHARED +
+							  (off & ~3)));
+
+			printf(" %02x", (data >> (8 * (off & 3))) & 0xff);
+		}
+	}
+	printf("\n");
+	return 1;
+}
+
+int gx_lpc8051_cec_fetch_rx(u8 *frame)
+{
+	u32 info;
+	u32 word;
+	u8 seq;
+	u8 len;
+	u8 i;
+
+	if (!gx_lpc8051_open_ready(GX_LPC_CAP_SUSPEND))
+		return 0;
+	info = readl((void __iomem *)(GX_LPC_SHARED + 0x1ac));
+	seq = info >> 16;
+	len = info >> 24;
+	if (!seq || seq == gx_lpc_rx_seen)
+		return 0;
+	gx_lpc_rx_seen = seq;
+	if (len > 16)
+		len = 16;
+	for (i = 0; i < len; i++) {
+		word = readl((void __iomem *)(GX_LPC_SHARED + 0x1b0 +
+					      (i & ~3)));
+		frame[i] = (word >> (8 * (i & 3))) & 0xff;
+	}
+	return len;
+}
+
+int gx_lpc8051_cec_show_tx(void)
+{
+	static u8 tx_seen;
+	u32 word;
+	u8 seq;
+
+	if (!gx_lpc8051_open_ready(GX_LPC_CAP_SUSPEND))
+		return 0;
+	word = readl((void __iomem *)(GX_LPC_SHARED + 0x1f0));
+	seq = word;
+	if (!seq || seq == tx_seen)
+		return 0;
+	tx_seen = seq;
+	printf("gxcec: lpc sent %u bytes, ACK slot pulled low for bytes %02x\n",
+	       (word >> 16) & 0xff, (word >> 8) & 0xff);
+	return 1;
+}
+
+int gx_lpc8051_cec_show_rx(void)
+{
+	u32 info;
+	u32 word;
+	u8 seq;
+	u8 len;
+	u8 i;
+
+	if (!gx_lpc8051_open_ready(GX_LPC_CAP_SUSPEND))
+		return 0;
+	info = readl((void __iomem *)(GX_LPC_SHARED + 0x1ac));
+	seq = info >> 16;
+	len = info >> 24;
+	if (!seq || seq == gx_lpc_rx_seen)
+		return 0;
+	gx_lpc_rx_seen = seq;
+	if (len > 16)
+		len = 16;
+	printf("gxcec: lpc");
+	for (i = 0; i < len; i++) {
+		word = readl((void __iomem *)(GX_LPC_SHARED + 0x1b0 +
+					      (i & ~3)));
+		printf(" %02x", (word >> (8 * (i & 3))) & 0xff);
+	}
+	printf("\n");
+	return 1;
+}
+
+/*
+ * Ask the 8051 to record the next frame on P0.5 and print it as 32-tick
+ * level durations (start low first, then alternating high and low).  Feed
+ * the output to gxtest/tools/cec/cec_edges_decode.py.
+ */
+int gx_lpc8051_cec_edges(void)
+{
+	void __iomem *req = (void __iomem *)(GX_LPC_SHARED + 0x1e4);
+	void __iomem *state = (void __iomem *)(GX_LPC_SHARED + 0x1e8);
+	void __iomem *rate_reg = (void __iomem *)(GX_LPC_SHARED + 0x1ec);
+	u32 word;
+	u8 seq;
+	u8 n;
+	u8 i;
+	u8 flags;
+	int waited;
+
+	if (!gx_lpc8051_open_ready(GX_LPC_CAP_SUSPEND))
+		return -ENODEV;
+	seq = readl(req) + 1;
+	if (!seq)
+		seq = 1;
+	writel(seq, req);
+	printf("gxcec: recording the next frame (up to 8 s), trigger the TV now\n");
+	for (waited = 0; waited < 8000; waited++) {
+		if ((readl(state) & 0xff) == seq)
+			break;
+		if (ctrlc())
+			return -EINTR;
+		udelay(1000);
+	}
+	if (waited == 8000) {
+		printf("gxcec: edge recorder did not answer\n");
+		return -ETIMEDOUT;
+	}
+	word = readl(state);
+	n = (word >> 8) & 0xff;
+	flags = (word >> 16) & 0xff;
+	if (n > 96)
+		n = 96;
+	if (flags & 1) {
+		printf("gxcec: no frame seen on the CEC pin\n");
+		return -ENODATA;
+	}
+	printf("gxcec: edges rate=%u n=%u flags=%u :",
+	       readl(rate_reg) & 0xffff, n, flags);
+	for (i = 0; i < n; i++) {
+		u32 off = 0xa0 + i;
+
+		word = readl((void __iomem *)(GX_LPC_SHARED + (off & ~3)));
+		printf(" %02x", (word >> (8 * (off & 3))) & 0xff);
+	}
+	printf("\n");
+	return 0;
+}
+
+int gx_lpc8051_cec_show_snap(void)
+{
+	u32 word;
+	u8 seq;
+
+	if (!gx_lpc8051_open_ready(GX_LPC_CAP_SUSPEND))
+		return 0;
+	word = readl((void __iomem *)(GX_LPC_SHARED + 0x17c));
+	seq = word;
+	if (!seq || seq == gx_lpc_snap_seen)
+		return 0;
+	gx_lpc_snap_seen = seq;
+	printf("gxcec: cec istat %02x", (word >> 8) & 0xff);
+	{
+		u8 n = 0;
+		u8 k;
+		u32 countw = readl((void __iomem *)(GX_LPC_SHARED + 0x17c));
+
+		/* snap[0] is byte 2 of the word at 0x17c, snap[1] is byte 3. */
+		n = (countw >> 16) & 0xff;
+		if ((countw >> 24) & 0xff)
+			printf(" sfr");
+		if (n > 22)
+			n = 22;
+		for (k = 0; k < n; k++) {
+			u32 off = 0x180 + k * 2;
+			u32 data = readl((void __iomem *)(GX_LPC_SHARED + (off & ~3)));
+			u8 idx = (data >> (8 * (off & 3))) & 0xff;
+			u8 val;
+
+			off++;
+			data = readl((void __iomem *)(GX_LPC_SHARED + (off & ~3)));
+			val = (data >> (8 * (off & 3))) & 0xff;
+			printf(" 80%02x=%02x", idx, val);
+		}
+	}
+	printf("\n");
+	return 1;
+}
+
 static u8 gx_lpc_wake_ir_count;
 static u16 gx_lpc_wake_ir[4];
 static u8 gx_lpc_wake_sequence;
@@ -934,8 +1188,6 @@ int gx_lpc8051_start(const u8 *fw, ulong fw_size,
 	writel(ctrl, (void __iomem *)GX_LPC_CTRL);
 	udelay(10);
 
-	printf("gxlpc: programming %lu bytes of 8051 code from %s...\n",
-	       fw_size, source);
 	for (i = 0; i < fw_size; i++) {
 		byte = fw[i];
 		writel((i << 8) | byte, (void __iomem *)GX_LPC_CODE_PORT);
@@ -987,12 +1239,7 @@ int gx_lpc8051_start(const u8 *fw, ulong fw_size,
 	gx_lpc8051_publish();
 	mdelay(20);
 	/* A4D00304/A4D00308 are not safe to read once the 8051 is running. */
-	printf("gxlpc: 8051 panel core released: ctrl=%08x text='%s' brightness=%u aux=%x\n",
-	       ctrl, text, gx_lpc_brightness, gx_lpc_aux);
 	status = readl(shared + GX_LPC_STATUS_OFF);
-	printf("gxlpc: open LPC status=%02x ABI=%u.%u caps=%02x\n",
-	       status & 0xff, (status >> 8) & 0xff,
-	       (status >> 16) & 0xff, (status >> 24) & 0xff);
 	if ((status & 0xff) != GX_LPC_STATUS_READY ||
 	    ((status >> 8) & 0xff) != GX_LPC_ABI_MAJOR ||
 	    ((status >> 16) & 0xff) != GX_LPC_ABI_MINOR ||
@@ -1007,9 +1254,13 @@ int gx_lpc8051_start(const u8 *fw, ulong fw_size,
 	     GX_LPC_CAP_AUX | GX_LPC_CAP_SCROLL |
 	     GX_LPC_CAP_RTC | GX_LPC_CAP_ALARM |
 	     GX_LPC_CAP_SUSPEND)) {
-		printf("gxlpc: open LPC firmware did not report ready\n");
+		printf("gxlpc: open LPC firmware did not report ready: status=%02x ABI=%u.%u caps=%02x\n",
+		       status & 0xff, (status >> 8) & 0xff,
+		       (status >> 16) & 0xff, (status >> 24) & 0xff);
 		return -EIO;
 	}
+	printf("gxlpc: loaded %lu bytes of %s (ABI %u.%u)\n", fw_size, source,
+	       GX_LPC_ABI_MAJOR, GX_LPC_ABI_MINOR);
 
 	return 0;
 }
@@ -1137,12 +1388,49 @@ int gx_lpc8051_probe_keys(void)
 	return 0;
 }
 
+static bool gx_lpc_alive_checked;
+
+/* The 8051 RTC snapshot moves every second while the image is running. */
+static bool gx_lpc8051_alive(void)
+{
+	void __iomem *rtc = (void __iomem *)(GX_LPC_SHARED +
+					     GX_LPC_RTC_STATE_OFF);
+	u32 first = readl(rtc) & 0x00ffffff;
+	int i;
+
+	for (i = 0; i < 24; i++) {
+		mdelay(50);
+		if ((readl(rtc) & 0x00ffffff) != first)
+			return true;
+	}
+	return false;
+}
+
 int gx_lpc_ensure_open(const char *text)
 {
-	if (gx_lpc8051_open_ready(GX_LPC_CAP_DISPLAY | GX_LPC_CAP_SCROLL |
-				   GX_LPC_CAP_BRIGHTNESS | GX_LPC_CAP_AUX |
-				   GX_LPC_CAP_RTC | GX_LPC_CAP_ALARM |
-				   GX_LPC_CAP_SUSPEND))
+	u32 status = readl((void __iomem *)(GX_LPC_SHARED + GX_LPC_STATUS_OFF));
+	bool ready = gx_lpc8051_open_ready(GX_LPC_CAP_DISPLAY |
+					   GX_LPC_CAP_SCROLL |
+					   GX_LPC_CAP_BRIGHTNESS |
+					   GX_LPC_CAP_AUX | GX_LPC_CAP_RTC |
+					   GX_LPC_CAP_ALARM |
+					   GX_LPC_CAP_SUSPEND);
+
+	/*
+	 * A wake from soft standby cold-boots the CK610 but leaves the old open
+	 * image parked in the LPC, still reporting ready.  Newer images mark
+	 * themselves WOKEN; for any other image, once per boot, check that its
+	 * clock still ticks before trusting it.
+	 */
+	if ((status & 0xff) == GX_LPC_STATUS_WOKEN) {
+		printf("gxlpc: LPC image stopped after a wake, reloading it\n");
+		ready = false;
+	} else if (ready && !gx_lpc_alive_checked && !gx_lpc8051_alive()) {
+		printf("gxlpc: LPC image is not running, reloading it\n");
+		ready = false;
+	}
+	gx_lpc_alive_checked = true;
+	if (ready)
 		return 0;
 
 	return gx_lpc8051_start(gxopen_fw, gxopen_fw_end - gxopen_fw,

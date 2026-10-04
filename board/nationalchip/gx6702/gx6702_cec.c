@@ -25,15 +25,19 @@
 #include <stdio.h>
 #include <time.h>
 #include <vsprintf.h>
+#include <asm/io.h>
 #include <linux/delay.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
 
+#include "../../../cmd/gx_lpc.h"
 #include "gx6702_video.h"
 
 #define CEC_CTRL		0x7d00
 #define CEC_STAT		0x7d01
 #define CEC_MASK		0x7d02
+#define CEC_POLARITY		0x7d03
+#define CEC_INT			0x7d04
 #define CEC_ADDR_L		0x7d05
 #define CEC_ADDR_H		0x7d06
 #define CEC_TX_CNT		0x7d07
@@ -53,6 +57,10 @@
 
 #define CEC_CTRL_START_NORMAL	0x03
 #define CEC_MASK_ALL		0x7f
+/* Same bits the Synopsys driver writes to CEC_POLARITY, plus follower/wakeup. */
+#define CEC_STAT_TRACKED	(CEC_STAT_DONE | CEC_STAT_EOM | CEC_STAT_NACK | \
+				 CEC_STAT_ARB_LOST | CEC_STAT_ERROR_INIT | \
+				 CEC_STAT_ERROR_FOLL | CEC_STAT_WAKEUP)
 #define CEC_LA_UNREGISTERED	15
 #define CEC_BROADCAST		0x0f
 #define CEC_DEVICE_TUNER	3
@@ -63,6 +71,7 @@
 #define CEC_OP_IMAGE_VIEW_ON	0x04
 #define CEC_OP_TEXT_VIEW_ON	0x0d
 #define CEC_OP_STANDBY		0x36
+#define CEC_OP_ROUTING_CHANGE	0x80
 #define CEC_OP_ACTIVE_SOURCE	0x82
 #define CEC_OP_GIVE_PHYS_ADDR	0x83
 #define CEC_OP_REPORT_PHYS_ADDR	0x84
@@ -82,6 +91,7 @@ static const struct cec_name cec_opcodes[] = {
 	{ 0x36, "System Standby" },
 	{ 0x44, "User Control Pressed" },
 	{ 0x45, "User Control Released" },
+	{ 0x80, "Routing Change" },
 	{ 0x82, "Active Source" },
 	{ 0x83, "Give Physical Address" },
 	{ 0x84, "Report Physical Address" },
@@ -126,6 +136,7 @@ static const struct cec_name cec_keys[] = {
 static const u8 cec_la_candidates[] = { 3, 6, 7, 10 };
 
 static int cec_mode;
+static bool cec_verbose;
 static bool cec_enabled;
 static u8 cec_la = CEC_LA_UNREGISTERED;
 static bool cec_pa_valid;
@@ -192,10 +203,20 @@ static void cec_program_la(u8 la)
 {
 	u16 mask;
 
+	/*
+	 * Bit 15 is the broadcast listener.  Without it the block drops
+	 * Set Stream Path, Active Source and System Standby, and a Philips
+	 * set that has not yet aimed User Control at this logical address
+	 * looks completely silent.
+	 */
+	/*
+	 * Logical address 1 is the LPC header 0x10.  Image View On leaves the
+	 * TV aiming User Control at that address, which a claim of LA 3 drops.
+	 */
 	if (la >= CEC_LA_UNREGISTERED)
-		mask = 0x8000;
+		mask = 0x8002;
 	else
-		mask = 1u << la;
+		mask = (1u << la) | (1u << 1) | 0x8000;
 	gx6702_hdmi_writeb(CEC_ADDR_L, mask & 0xff);
 	gx6702_hdmi_writeb(CEC_ADDR_H, (mask >> 8) & 0xff);
 }
@@ -249,6 +270,8 @@ static int cec_wait(struct cec_tx_status *st)
 	return CEC_CAT_TIMEOUT;
 }
 
+static void cec_drain_rx(void);
+
 static int cec_xfer(const u8 *frame, int len, struct cec_tx_status *st)
 {
 	int i;
@@ -258,6 +281,8 @@ static int cec_xfer(const u8 *frame, int len, struct cec_tx_status *st)
 	if (!frame || len < 1 || len > 16 || !st)
 		return -EINVAL;
 
+	/* A transmit clears the status bits.  Keep a frame that arrived first. */
+	cec_drain_rx();
 	gx6702_hdmi_writeb(CEC_CTRL, 0);
 	gx6702_hdmi_writeb(CEC_STAT, 0xff);
 	gx6702_hdmi_writeb(HDMI_IH_CEC_STAT0, 0xff);
@@ -326,6 +351,14 @@ static void cec_describe(const u8 *frame, int len, char *buf, int buflen)
 		snprintf(buf, buflen, "%s %s", op_name, pa);
 		return;
 	}
+	if (op == CEC_OP_ROUTING_CHANGE && len >= 6) {
+		char pa2[16];
+
+		cec_format_pa(((u16)frame[2] << 8) | frame[3], pa, sizeof(pa));
+		cec_format_pa(((u16)frame[4] << 8) | frame[5], pa2, sizeof(pa2));
+		snprintf(buf, buflen, "%s %s -> %s", op_name, pa, pa2);
+		return;
+	}
 	if (op == CEC_OP_REPORT_POWER && len >= 3) {
 		extra = cec_power_name(frame[2]);
 		if (extra)
@@ -363,7 +396,7 @@ static void cec_print_result(const struct cec_tx_status *st, unsigned int cat)
 	       st->stat, st->ih, cat, cec_category_name(cat), how);
 }
 
-int gx6702_cec_tx(const u8 *frame, int len)
+static int cec_tx_frame(const u8 *frame, int len, bool report)
 {
 	struct cec_tx_status st;
 	u8 bits;
@@ -376,13 +409,19 @@ int gx6702_cec_tx(const u8 *frame, int len)
 	cat = cec_xfer(frame, len, &st);
 	if (cat < 0)
 		return cat;
-	cec_print_result(&st, cat);
+	if (report)
+		cec_print_result(&st, cat);
 	if (cat == CEC_CAT_TIMEOUT)
 		return -ETIMEDOUT;
 	bits = cec_tx_bits(&st);
 	if ((bits & CEC_STAT_DONE) && !(bits & CEC_STAT_NACK))
 		return 0;
 	return -EIO;
+}
+
+int gx6702_cec_tx(const u8 *frame, int len)
+{
+	return cec_tx_frame(frame, len, true);
 }
 
 static bool cec_pa_from_edid(const u8 *edid, int len, u16 *pa)
@@ -446,7 +485,8 @@ static void cec_read_pa(void)
 	}
 	cec_pa_valid = true;
 	cec_format_pa(cec_pa, pa, sizeof(pa));
-	printf("gxcec: physical address %s\n", pa);
+	if (cec_verbose)
+		printf("gxcec: physical address %s\n", pa);
 }
 
 static int cec_claim(void)
@@ -457,11 +497,12 @@ static int cec_claim(void)
 	u8 ping;
 
 	gx6702_hdmi_writeb(CEC_CTRL, 0);
-	gx6702_hdmi_writeb(CEC_MASK, 0);
+	gx6702_hdmi_writeb(CEC_POLARITY, CEC_STAT_TRACKED);
+	gx6702_hdmi_writeb(CEC_MASK, (u8)~CEC_STAT_TRACKED);
+	gx6702_hdmi_writeb(HDMI_IH_MUTE_CEC_STAT0, (u8)~CEC_STAT_TRACKED);
 	gx6702_hdmi_writeb(CEC_LOCK, 0);
 	gx6702_hdmi_writeb(CEC_STAT, 0xff);
 	gx6702_hdmi_writeb(HDMI_IH_CEC_STAT0, 0xff);
-	gx6702_hdmi_writeb(HDMI_IH_MUTE_CEC_STAT0, 0);
 
 	for (i = 0; i < (int)ARRAY_SIZE(cec_la_candidates); i++) {
 		u8 la = cec_la_candidates[i];
@@ -471,9 +512,10 @@ static int cec_claim(void)
 		cat = cec_xfer(&ping, 1, &st);
 		if (cat < 0)
 			return cat;
-		printf("gxcec: ping la %u stat %02x ih %02x eCos %u %s%s\n",
-		       la, st.stat, st.ih, cat, cec_category_name(cat),
-		       (cat == 1 || cat == 3) ? " line-alive" : "");
+		if (cec_verbose)
+			printf("gxcec: ping la %u stat %02x ih %02x eCos %u %s%s\n",
+			       la, st.stat, st.ih, cat, cec_category_name(cat),
+			       (cat == 1 || cat == 3) ? " line-alive" : "");
 		/*
 		 * Category 3 is NACK without DONE: the address is free.
 		 * Category 1 is an ACK: someone already owns it.  Raw is
@@ -482,7 +524,6 @@ static int cec_claim(void)
 		 */
 		if (cat == 3) {
 			cec_la = la;
-			printf("gxcec: claimed logical address %u\n", la);
 			return 0;
 		}
 	}
@@ -505,7 +546,7 @@ static void cec_announce(void)
 	frame[2] = 0;
 	frame[3] = 0;
 	frame[4] = 0;
-	gx6702_cec_tx(frame, 5);
+	cec_tx_frame(frame, 5, cec_verbose);
 
 	if (!cec_pa_valid)
 		return;
@@ -513,7 +554,7 @@ static void cec_announce(void)
 	frame[2] = cec_pa >> 8;
 	frame[3] = cec_pa & 0xff;
 	frame[4] = CEC_DEVICE_TUNER;
-	gx6702_cec_tx(frame, 5);
+	cec_tx_frame(frame, 5, cec_verbose);
 }
 
 static void cec_maybe_reply(const u8 *frame, int len)
@@ -554,31 +595,53 @@ static void cec_drain_rx(void)
 {
 	u8 stat = gx6702_hdmi_readb(CEC_STAT);
 	u8 ih = gx6702_hdmi_readb(HDMI_IH_CEC_STAT0);
-	u8 bits = stat | ih;
-	u8 cnt = gx6702_hdmi_readb(CEC_RX_CNT);
+	u8 intr = gx6702_hdmi_readb(CEC_INT);
+	u8 bits = stat | ih | intr;
+	u8 cnt;
 	u8 frame[16];
 	int n, i;
 
 	if (bits & CEC_STAT_WAKEUP)
-		printf("gxcec: WAKEUP latched stat %02x ih %02x\n", stat, ih);
+		printf("gxcec: WAKEUP latched stat %02x ih %02x int %02x\n",
+		       stat, ih, intr);
 
-	if ((bits & CEC_STAT_EOM) || cnt) {
+	/*
+	 * LXDVB501 FUN_900ac3e8: EOM is bit 1.  It writes 0 to LOCK (0x7D30)
+	 * before reading the count at 0x7D08 and the bytes at 0x7D20.
+	 */
+	if (bits & CEC_STAT_EOM) {
+		gx6702_hdmi_writeb(CEC_LOCK, 0);
+		cnt = gx6702_hdmi_readb(CEC_RX_CNT) & 0x0f;
 		n = cnt;
 		if (n > 16)
 			n = 16;
-		if (!n)
-			n = 1;
 		for (i = 0; i < n; i++)
 			frame[i] = gx6702_hdmi_readb(CEC_RX_DATA + i);
-		gx6702_hdmi_writeb(CEC_LOCK, 0);
-		cec_print_frame("rx", frame, n);
-		cec_maybe_reply(frame, n);
+		if (n)
+			cec_print_frame("rx", frame, n);
+		else
+			printf("gxcec: EOM but empty cnt, stat %02x ih %02x int %02x\n",
+			       stat, ih, intr);
+		if (n)
+			cec_maybe_reply(frame, n);
+	} else if (bits & (CEC_STAT_ERROR_FOLL | CEC_STAT_ERROR_INIT |
+			   CEC_STAT_ARB_LOST)) {
+		printf("gxcec: rx error stat %02x ih %02x int %02x\n",
+		       stat, ih, intr);
 	}
 
 	if (stat)
 		gx6702_hdmi_writeb(CEC_STAT, stat);
 	if (ih)
 		gx6702_hdmi_writeb(HDMI_IH_CEC_STAT0, ih);
+	if (intr)
+		gx6702_hdmi_writeb(CEC_INT, intr);
+}
+
+/* Bring-up chatter (address claim, hardware status, header-only polls). */
+void gx6702_cec_set_verbose(bool on)
+{
+	cec_verbose = on;
 }
 
 int gx6702_cec_mode(void)
@@ -624,8 +687,16 @@ int gx6702_cec_set_mode(int mode)
 	if (!claimed)
 		cec_announce();
 	cec_mode = mode;
-	printf("gxcec: mode %d, HDMI CEC clock ungated (TV wake is the LPC engine)\n",
-	       mode);
+	if (cec_pa_valid) {
+		char pa[16];
+
+		cec_format_pa(cec_pa, pa, sizeof(pa));
+		printf("gxcec: mode %d, physical %s, logical %u\n", mode, pa,
+		       cec_la);
+	} else {
+		printf("gxcec: mode %d, physical unknown, logical %u\n", mode,
+		       cec_la);
+	}
 	return 0;
 }
 
@@ -642,11 +713,12 @@ void gx6702_cec_dump(void)
 	printf("gxcec: mode %d logical %u pa %s clock %s\n",
 	       cec_mode, cec_la, pa,
 	       (clk & HDMI_MC_CLKDIS_CECCLK_DISABLE) ? "gated" : "running");
-	printf("gxcec: CLKDIS %02x CTRL %02x STAT %02x MASK %02x\n",
+	printf("gxcec: CLKDIS %02x CTRL %02x STAT %02x MASK %02x POL %02x\n",
 	       clk,
 	       gx6702_hdmi_readb(CEC_CTRL),
 	       gx6702_hdmi_readb(CEC_STAT),
-	       gx6702_hdmi_readb(CEC_MASK));
+	       gx6702_hdmi_readb(CEC_MASK),
+	       gx6702_hdmi_readb(CEC_POLARITY));
 	printf("gxcec: ADDR_L %02x ADDR_H %02x TX_CNT %u RX_CNT %u LOCK %02x\n",
 	       gx6702_hdmi_readb(CEC_ADDR_L),
 	       gx6702_hdmi_readb(CEC_ADDR_H),
@@ -657,31 +729,71 @@ void gx6702_cec_dump(void)
 	       gx6702_hdmi_readb(HDMI_IH_CEC_STAT0),
 	       gx6702_hdmi_readb(HDMI_IH_MUTE_CEC_STAT0),
 	       gx6702_hdmi_readb(CEC_WKUPCTRL));
+	if (gx_lpc8051_open_ready(GX_LPC_CAP_SUSPEND))
+		printf("gxcec: LPC clock word %08x, Timer0 %u ticks/ms\n",
+		       readl((void __iomem *)(GX_LPC_SHARED + 0x74)),
+		       readl((void __iomem *)(GX_LPC_SHARED + 0x1ec)) & 0xffff);
 }
 
 int gx6702_cec_poll(unsigned int seconds)
 {
 	ulong start;
+	int frames = 0;
+	int pulses = 0;
+	u8 last[5];
+	u8 cur[5];
+	u8 lpc_frame[16];
+	int lpc_len;
 
 	if (!cec_enabled) {
 		printf("gxcec: clock gated, run gxcec on\n");
 		return -EIO;
 	}
+	/* Stock RX drops frames while LOCK stays set. */
+	gx6702_hdmi_writeb(CEC_LOCK, 0);
+	memset(last, 0xff, sizeof(last));
 	if (!seconds) {
 		cec_drain_rx();
+		gx_lpc8051_cec_show_rx();
+		gx_lpc8051_cec_show_line();
+		gx_lpc8051_cec_show_snap();
 		return 0;
 	}
 
-	printf("gxcec: poll %u s (ctrl-c to stop)\n", seconds);
+	printf("gxcec: polling %u s%s\n", seconds,
+	       cec_verbose ? " (verbose)" : "");
 	start = get_timer(0);
 	do {
+		cur[0] = gx6702_hdmi_readb(CEC_STAT);
+		cur[1] = gx6702_hdmi_readb(HDMI_IH_CEC_STAT0);
+		cur[2] = gx6702_hdmi_readb(CEC_INT);
+		cur[3] = gx6702_hdmi_readb(CEC_RX_CNT);
+		cur[4] = gx6702_hdmi_readb(CEC_LOCK);
+		if (memcmp(cur, last, sizeof(cur))) {
+			if (cec_verbose)
+					printf("gxcec: hw stat %02x ih %02x int %02x cnt %02x lock %02x\n",
+				       cur[0], cur[1], cur[2], cur[3], cur[4]);
+			memcpy(last, cur, sizeof(cur));
+		}
 		cec_drain_rx();
+		lpc_len = gx_lpc8051_cec_fetch_rx(lpc_frame);
+		if (lpc_len) {
+			frames = 1;
+			/* Header-only polls from other devices are bus noise. */
+			if (cec_verbose || lpc_len > 1)
+				cec_print_frame("lpc", lpc_frame, lpc_len);
+		}
+		gx_lpc8051_cec_show_tx();
+		if (cec_verbose)
+			pulses |= gx_lpc8051_cec_show_pulse();
 		if (ctrlc()) {
 			printf("gxcec: poll stopped\n");
 			return -EINTR;
 		}
 		udelay(1000);
 	} while (get_timer(start) < seconds * 1000UL);
+	if (!frames && !pulses)
+		printf("gxcec: no frame seen\n");
 	return 0;
 }
 

@@ -8,3 +8,5 @@ gx6702-lpc.mem
 gx6702-lpc.rel
 gx6702-lpc.rst
 gx6702-lpc.sym
+build-gx6702/
+build-gx6706/

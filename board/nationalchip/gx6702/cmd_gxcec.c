@@ -1,35 +1,24 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * gxcec - drive the DesignWare HDMI CEC engine from U-Boot.
+ * gxcec - HDMI CEC control.
  *
- * `gxvideo cec` stays a read-only snapshot.  This command clocks the block,
- * claims a tuner logical address, and prints the LXDVB501 opcodes.
+ * The CEC wire is P0.5 of the always-on 8051, so the open LPC firmware does
+ * the work: it posts Image View On / System Standby, decodes bus frames,
+ * ACKs the addresses we own, answers Give Device Power Status, and in soft
+ * standby cold-boots the CK610 on a Set Stream Path, Active Source or Routing
+ * Change for our HDMI physical address.  The DesignWare block at 0xA4F00000
+ * is only used to read the EDID physical address and claim a logical address;
+ * it is not wired to the bus on the GX6702 boards tested (a ping to the TV
+ * at address 0 is never ACKed).
  *
- * Philips 24PHH4000/88 (EasyLink, October 2016) live gate.  Before the test:
- * Setup, TV settings, General settings, EasyLink.  Leave EasyLink, EasyLink
- * Remote Control, One-touch play, and One-touch standby On.  Keep the box
- * awake and log `gxcec poll` in this order:
+ * Typical use:
+ *   gxcec on              cecmode 1: standby posts 0x36, power-on posts 0x04
+ *   gxcec poll 30         print frames the 8051 decodes (-v shows everything)
+ *   gxlp sleep after      then switch the TV to this input to wake the box
  *
- * 1. `gxcec on` then `gxcec viewon` with the TV in standby.  Pass: the TV
- *    wakes on this input.  viewon posts Image View On through the LPC engine.
- * 2. SOURCES, select this HDMI device, then arrows, OK, and digits.  Pass:
- *    opcode 0x44.  Home and Options are not forwarded by this set.
- * 3. Put the TV into standby.  Pass: opcode 0x36.
- * 4. With the TV in standby, press Play, then try SOURCES.  Record every
- *    opcode.  0x44, 0x86, or 0x04 here is the TV trying to wake the source.
- * 5. Turn the TV on with the power key only and leave it on the tuner.
- *    Give Physical Address or Give Power Status can show up from discovery.
- *    An empty wake-opcode log on this step is a property of this TV.
- *
- * If Image View On does not wake the TV and steps 2-4 stay empty, the pin is
- * unwired or the CEC clock does not reach the pad.  Stop.  Do not enter standby.
- *
- * `gxlp sleep` with cecmode 1 or 2 arms the LPC pin listener.  A matching
- * Set Stream Path or Active Source, or a directed Image/Text View On, cold-boots
- * the CK610 and does not post another Image View On.  `gxcec snap` prints the
- * LPC peripheral snapshot (XDATA 0x8000, SFR 0xab) captured when a status bit
- * other than TX-done is set.  That snapshot is diagnostic; wake does not decode it.
- * cecmode at shared XDATA 0x90 selects the LPC engine policy.  ABI is 1.10.
+ * Diagnostics: `gxcec dump` (clock word and Timer0 rate; 0x016e3600 is a
+ * 24 MHz 8051), `gxcec edges` (record one raw frame for
+ * gxtest/tools/cec/cec_edges_decode.py) and `gxcec snap`.  ABI is 1.11.
  */
 
 #include <command.h>
@@ -118,13 +107,34 @@ static int do_gxcec(struct cmd_tbl *cmdtp, int flag, int argc,
 	char *end;
 	ulong mode;
 
+	bool verbose;
+
 	if (argc < 2)
 		return CMD_RET_USAGE;
+	verbose = argc > 2 && !strcmp(argv[argc - 1], "-v");
+	if (verbose)
+		argc--;
+	gx6702_cec_set_verbose(verbose);
 	cmd = argv[1];
 
 	if (!strcmp(cmd, "on")) {
+		u16 pa = 0;
+		int have;
+		int announced;
+
+		if (gx_lpc_ensure_open("boot"))
+			return CMD_RET_FAILURE;
 		gx_lpc8051_set_cecmode(1);
-		return gx6702_cec_set_mode(1) ? CMD_RET_FAILURE : CMD_RET_SUCCESS;
+		if (gx6702_cec_set_mode(1))
+			return CMD_RET_FAILURE;
+		have = gx6702_cec_physical(&pa);
+		announced = gx_lpc8051_cec_announce(pa, have);
+		if (announced)
+			printf("gxcec: LPC Image View On failed (%d)\n",
+			       announced);
+		else if (verbose)
+			printf("gxcec: LPC Image View On posted\n");
+		return announced ? CMD_RET_FAILURE : CMD_RET_SUCCESS;
 	}
 	if (!strcmp(cmd, "off")) {
 		gx_lpc8051_set_cecmode(0);
@@ -136,8 +146,23 @@ static int do_gxcec(struct cmd_tbl *cmdtp, int flag, int argc,
 	}
 	if (!strcmp(cmd, "snap"))
 		return gxcec_snap();
+	if (!strcmp(cmd, "edges")) {
+		int rec;
+
+		if (gx_lpc_ensure_open("boot"))
+			return CMD_RET_FAILURE;
+		gx_lpc8051_set_cecmode(1);
+		rec = gx_lpc8051_cec_edges();
+		if (rec == -EINTR)
+			return CMD_RET_SUCCESS;
+		return rec ? CMD_RET_FAILURE : CMD_RET_SUCCESS;
+	}
 	if (!strcmp(cmd, "poll")) {
 		int polled;
+
+		if (gx_lpc_ensure_open("boot"))
+			return CMD_RET_FAILURE;
+		gx_lpc8051_set_cecmode(1);
 
 		seconds = 15;
 		if (argc >= 3) {
@@ -193,25 +218,20 @@ static int do_gxcec(struct cmd_tbl *cmdtp, int flag, int argc,
 }
 
 U_BOOT_CMD(gxcec, 18, 0, do_gxcec,
-	   "GX6702 DesignWare HDMI CEC",
-	   "on|off|dump|snap|poll|viewon|standby|tx|mode\n"
+	   "GX6702 HDMI CEC",
+	   "on|off|mode|poll|viewon|standby|tx|dump|snap|edges [-v]\n"
 	   "gxcec on                         - cecmode 1: standby posts 0x36, power-on posts 0x04\n"
 	   "gxcec off                        - cecmode 0, and gate the HDMI CEC clock\n"
 	   "gxcec mode [0|1|2]               - 1 wakes the TV on box power; 2 standby only\n"
-	   "gxcec dump                       - clock, status, address; WKUPCTRL is read only\n"
-	   "gxcec snap                       - LPC XDATA 0x8000 snapshot and last GPIO frame\n"
-	   "gxcec poll [seconds]             - drain RX (default 15s, 0 drains once)\n"
+	   "gxcec poll [seconds]             - print frames decoded by the LPC (default 15s)\n"
 	   "gxcec viewon                     - LPC engine posts Image View On (0x04)\n"
 	   "gxcec standby                    - LPC engine posts System Standby (0x36)\n"
-	   "gxcec tx <hex bytes>             - raw frame, header included\n"
-	   "Philips 24PHH4000/88 gate, box awake, EasyLink/remote/one-touch On:\n"
-	   "  1 viewon with the TV in standby: LPC posts Image View On and the TV wakes\n"
-	   "  2 SOURCES then this HDMI device: arrows/OK/digits are 0x44\n"
-	   "  3 TV standby is 0x36\n"
-	   "  4 Play then SOURCES from TV standby: record 0x44/0x86/0x04\n"
-	   "  5 power key only, left on the tuner: empty wake log is normal\n"
-	   "Stop if Image View On does not wake the TV and steps 2-4 stay empty.\n"
-	   "gxlp sleep after gxcec on cold-boots on 0x86/0x82 with this physical\n"
-	   "address, or on a directed 0x04/0x0d.  0x36 does not wake.\n"
-	   "gxcec snap shows a non-TX-done LPC status capture.  Wake uses P0.5\n"
-	   "timing, not that capture.\n");
+	   "gxcec tx <hex bytes>             - raw frame through the DesignWare block\n"
+	   "gxcec dump                       - clock, status, address, LPC Timer0 rate\n"
+	   "gxcec snap                       - LPC XDATA 0x8000 snapshot and last GPIO frame\n"
+	   "gxcec edges                      - record the next bus frame as raw level times\n"
+	   "                                   (decode: gxtest/tools/cec/cec_edges_decode.py)\n"
+	   "-v shows address claim, hardware status and header-only polls.\n"
+	   "gxlp sleep after gxcec on cold-boots when the TV selects this input\n"
+	   "(Set Stream Path, Active Source or Routing Change for our address) or sends\n"
+	   "a directed Image/Text View On.  System Standby does not wake.\n");

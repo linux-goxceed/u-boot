@@ -7,8 +7,9 @@
 
 #define GX_LPC_SHARED		0xA4D00000UL
 #define GX_LPC_STATUS_READY	0xa5
+#define GX_LPC_STATUS_WOKEN	0x57
 #define GX_LPC_ABI_MAJOR	1
-#define GX_LPC_ABI_MINOR	10
+#define GX_LPC_ABI_MINOR	11
 #define GX_LPC_CAP_DISPLAY	BIT(0)
 #define GX_LPC_CAP_BRIGHTNESS	BIT(1)
 #define GX_LPC_CAP_AUX		BIT(2)
@@ -78,6 +79,22 @@ int gx_lpc8051_set_alarm(u8 hour, u8 minute, u8 second);
 int gx_lpc8051_cancel_alarm(void);
 void gx_lpc8051_set_cecmode(u8 mode);
 int gx_lpc8051_cec_post(u8 opcode);
+/* Send Image View On on P0.5.  have_pa stores the physical address. */
+int gx_lpc8051_cec_announce(u16 pa, int have_pa);
+/* Print one new frame decoded by the LPC pin listener.  1 if printed. */
+int gx_lpc8051_cec_show_rx(void);
+/* Print the result of the last bit-banged transmit when it changed. */
+int gx_lpc8051_cec_show_tx(void);
+/* Copy one new frame decoded by the LPC listener; returns its length or 0. */
+int gx_lpc8051_cec_fetch_rx(u8 *frame);
+/* Print when P0.5 has had a new falling edge.  1 if printed. */
+int gx_lpc8051_cec_show_line(void);
+/* Print a new start-bit measurement.  1 if printed. */
+int gx_lpc8051_cec_show_pulse(void);
+/* Print one new copy of the LPC CEC registers.  1 if printed. */
+int gx_lpc8051_cec_show_snap(void);
+/* Record and print the next CEC frame as raw level durations. */
+int gx_lpc8051_cec_edges(void);
 int gx_lpc8051_wake_show(void);
 int gx_lpc8051_wake_set_key(u8 key);
 int gx_lpc8051_wake_add_ir(u16 code);

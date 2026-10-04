@@ -412,6 +412,7 @@ void gx6702_hdmi_writeb(int offset, u8 val);
  * DesignWare CEC engine.  mode 0 gates the CEC clock; modes 1 and 2 enable it.
  * Return: 0 when the requested clock state was applied, or a negative errno.
  */
+void gx6702_cec_set_verbose(bool on);
 int gx6702_cec_set_mode(int mode);
 int gx6702_cec_mode(void);
 /* Claimed logical address, or 15 when none has been claimed. */
